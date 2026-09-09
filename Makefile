@@ -1,4 +1,8 @@
-.PHONY: up shell setup gen test down clean
+.PHONY: up shell setup gen test down clean mxu-test tpu-test norm-test norm-distributed-test rope-test quant-test gpalu-test vpu1-test vpu1-tests
+
+# Override for local sbt: make quant-test RTL_SBT=sbt
+RTL_SBT ?= docker exec lzero_rtl_env sbt
+VPU1_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(f => Set("VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala").contains(f.getName)))'
 
 # L-ZERO RTL Track 간편 명령어 세트
 # 1. 환경 빌드 및 실행
@@ -64,10 +68,25 @@ rope-test:
 	  'testOnly npu.core.RopeUnitTest'
 
 quant-test:
-	docker exec -it lzero_rtl_env sbt \
-	  'set Compile / unmanagedSources ~= (_.filter(f => Set("QuantActUnit.scala", "UniversalLUT.scala").contains(f.getName)))' \
+	$(RTL_SBT) $(VPU1_SOURCES) \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "QuantAct_Test.scala"))' \
 	  'testOnly npu.core.QuantActUnitTest'
+
+gpalu-test:
+	$(RTL_SBT) $(VPU1_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "GPALU_Test.scala"))' \
+	  'testOnly npu.core.GPALUUnitTest'
+
+vpu1-test:
+	$(RTL_SBT) $(VPU1_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "VPU1Route_Test.scala"))' \
+	  'testOnly npu.core.VPU1RouteTest'
+
+# One sbt invocation for the complete VPU1 regression.
+vpu1-tests:
+	$(RTL_SBT) $(VPU1_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("GPALU_Test.scala", "QuantAct_Test.scala", "VPU1Route_Test.scala").contains(f.getName)))' \
+	  'testOnly npu.core.GPALUUnitTest npu.core.QuantActUnitTest npu.core.VPU1RouteTest'
 
 # 5. 종료
 down:

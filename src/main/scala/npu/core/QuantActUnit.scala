@@ -9,7 +9,9 @@ object QuantParamMode {
   val PER_CHANNEL = 1.U(1.W)
 }
 
-// One lane of the existing packed requant + optional activation pipeline.
+// One shared activation LUT per lane, with four enabled edges of latency.
+// TPU: signed requant -> INT8 saturation or signed INT10 activation.
+// DIRECT: signed INT10 -> activation, independently of all qparams.
 // Packed parameter format is preserved:
 //   [31:16] multiplier
 //   [15:13] reserved
@@ -22,16 +24,21 @@ class QuantActCore(
   val outBits: Int
 ) extends Module {
 
+  require(inBits == 32 && outBits == 8 && indexBits == 10)
+
   private val numEntries = 1 << indexBits
   private val wordsPerBurst = writeBits / outBits
   private val burstAddrBits =
     math.max(1, log2Ceil(numEntries / wordsPerBurst))
 
   val io = IO(new Bundle {
-    val in_mac   = Input(SInt(inBits.W))
+    val in_tpu   = Input(SInt(inBits.W))
+    val in_direct = Input(SInt(10.W))
+    val input_mode = Input(UInt(1.W))
     val in_valid = Input(Bool())
     val param    = Input(UInt(32.W))
-    val act_en   = Input(Bool())
+    val act_mask = Input(UInt(2.W))
+    val fusion_second = Input(Bool())
     val stall    = Input(Bool())
 
     val lut_wr_en   = Input(Bool())
@@ -41,12 +48,16 @@ class QuantActCore(
     val out_qact  = Output(UInt(outBits.W))
     val out_valid = Output(Bool())
 
+    // One-cycle lookahead for a synchronous VB read, gated during stall.
+    val out_lookahead = Output(Bool())
+    val busy = Output(Bool())
     val lut_ready  = Output(Bool())
     val sync_alert = Output(Bool())
   })
 
   val run = !io.stall
-  val accept = io.in_valid && run
+  val direct = io.input_mode === VPU1InputMode.DIRECT
+  val selectedActEn = Mux(io.fusion_second, io.act_mask(1), io.act_mask(0))
 
   val zp    = io.param(7, 0).asSInt
   val shift = io.param(12, 8)
@@ -56,15 +67,18 @@ class QuantActCore(
   val s1Mult   = Reg(UInt(16.W))
   val s1Shift  = Reg(UInt(5.W))
   val s1ActEn  = Reg(Bool())
+  val s1Direct = Reg(Bool())
   val s1Valid  = RegInit(false.B)
 
   when(run) {
     s1Valid := io.in_valid
     when(io.in_valid) {
-      s1Sub   := io.in_mac.pad(inBits + 1) - zp.pad(inBits + 1)
-      s1Mult  := mult
-      s1Shift := shift
-      s1ActEn := io.act_en
+      s1Sub   := Mux(direct, io.in_direct.pad(inBits + 1),
+        io.in_tpu.pad(inBits + 1) - zp.pad(inBits + 1))
+      s1Mult  := Mux(direct, 1.U, mult)
+      s1Shift := Mux(direct, 0.U, shift)
+      s1ActEn := direct || selectedActEn
+      s1Direct := direct
     }
   }
 
@@ -76,26 +90,21 @@ class QuantActCore(
   when(run) {
     s2Valid := s1Valid
     when(s1Valid) {
-      s2MultRes := s1Sub * s1Mult.zext.asSInt
+      s2MultRes := Mux(s1Direct, s1Sub, s1Sub * s1Mult.zext.asSInt)
       s2Shift   := s1Shift
       s2ActEn   := s1ActEn
     }
   }
 
-  val maxIdx = ((BigInt(1) << indexBits) - 1).U(indexBits.W)
-  val shiftAmt = Mux(s2Shift > 2.U, s2Shift - 2.U, 0.U)
-  val shifted = (s2MultRes >> shiftAmt).asSInt
-
-  val clampedIdx =
-    Mux(
-      shifted < 0.S,
-      0.U(indexBits.W),
-      Mux(
-        shifted > maxIdx.zext.asSInt,
-        maxIdx,
-        shifted(indexBits - 1, 0).asUInt
-      )
-    )
+  val shifted = s2MultRes >> s2Shift
+  val clampedSigned10 = Wire(SInt(10.W))
+  clampedSigned10 := Mux(shifted < (-512).S, (-512).S,
+    Mux(shifted > 511.S, 511.S, shifted))
+  // Offset binary: -512 -> 0, 0 -> 512, 511 -> 1023.
+  val lutAddress = (clampedSigned10.pad(11) + 512.S(11.W)).asUInt
+  val clampedSigned8 = Wire(SInt(8.W))
+  clampedSigned8 := Mux(shifted < (-128).S, (-128).S,
+    Mux(shifted > 127.S, 127.S, shifted))
 
   val s3Idx = Reg(UInt(indexBits.W))
   val s3Linear = Reg(UInt(outBits.W))
@@ -105,8 +114,8 @@ class QuantActCore(
   when(run) {
     s3Valid := s2Valid
     when(s2Valid) {
-      s3Idx := clampedIdx
-      s3Linear := clampedIdx(indexBits - 1, indexBits - outBits)
+      s3Idx := lutAddress
+      s3Linear := clampedSigned8.asUInt
       s3ActEn := s2ActEn
     }
   }
@@ -157,6 +166,8 @@ class QuantActCore(
     (expectedWrValid =/= actLut.io.wr_valid) ||
     (holdValid && rawValid && run)
 
+  io.out_lookahead := s3Valid && run
+  io.busy := s1Valid || s2Valid || s3Valid || rawValid || holdValid
   io.lut_ready := actLut.io.lut_ready
 }
 
@@ -183,18 +194,22 @@ class QuantActUnit(
 ) extends Module {
 
   require(numLines == 16)
+  require(inBits == 32 && outBits == 8 && indexBits == 10)
 
   private val wordsPerBurst = writeBits / outBits
   private val burstAddrBits =
     math.max(1, log2Ceil((1 << indexBits) / wordsPerBurst))
 
   val io = IO(new Bundle {
-    val in_vec   = Input(Vec(numLines, SInt(inBits.W)))
+    val in_tpu   = Input(Vec(numLines, SInt(inBits.W)))
+    val in_direct = Input(Vec(numLines, SInt(10.W)))
+    val input_mode = Input(UInt(1.W))
     val in_valid = Input(Vec(numLines, Bool()))
 
     val param_mode   = Input(UInt(1.W))
     val matrix_param = Input(UInt(32.W))
-    val act_en       = Input(Bool())
+    val act_mask     = Input(UInt(2.W))
+    val fusion_second = Input(Bool())
 
     val stall      = Input(Bool())
     val soft_reset = Input(Bool())
@@ -211,6 +226,9 @@ class QuantActUnit(
     val out_vec   = Output(Vec(numLines, UInt(outBits.W)))
     val out_valid = Output(Vec(numLines, Bool()))
 
+    val out_lookahead = Output(Vec(numLines, Bool()))
+    val busy = Output(Bool())
+
     // Initializer barrier/status.
     val prefetch_ready = Output(Bool())
     val lut_ready      = Output(Bool())
@@ -218,7 +236,8 @@ class QuantActUnit(
   })
 
   val run = !io.stall
-  val perChannel = io.param_mode === QuantParamMode.PER_CHANNEL
+  val perChannel = io.input_mode === VPU1InputMode.TPU &&
+    io.param_mode === QuantParamMode.PER_CHANNEL
 
   val anyValid = io.in_valid.asUInt.orR
   val allValid = io.in_valid.asUInt.andR
@@ -228,7 +247,7 @@ class QuantActUnit(
   val tileStart = inputFire && (rowCounter === 0.U)
   val tileEnd   = inputFire && (rowCounter === 15.U)
 
-  when(io.soft_reset) {
+  when(io.soft_reset || !perChannel) {
     rowCounter := 0.U
   }.elsewhen(inputFire) {
     when(tileEnd) {
@@ -254,11 +273,13 @@ class QuantActUnit(
     perChannel && tileStart
 
   io.qparam_req_line :=
-    perChannel &&
+    perChannel && !io.soft_reset &&
     !reqOutstanding &&
     (!shadowValid || consumeShadow)
 
-  when(io.soft_reset) {
+  // Leaving TPU PER_CHANNEL invalidates prefetched operation state.
+  // soft_reset resets this scheduler only; callers must first drain the datapath.
+  when(io.soft_reset || !perChannel) {
     activeValid := false.B
     shadowValid := false.B
     reqOutstanding := false.B
@@ -276,7 +297,7 @@ class QuantActUnit(
     }
 
     // Response priority allows same-cycle refill after a consume event.
-    when(io.qparam_line_valid) {
+    when(io.qparam_line_valid && perChannel) {
       shadowParam := io.qparam_line_in
       shadowValid := true.B
       reqOutstanding := false.B
@@ -314,10 +335,13 @@ class QuantActUnit(
     )
 
   for (i <- 0 until numLines) {
-    cores(i).io.in_mac := io.in_vec(i)
+    cores(i).io.in_tpu := io.in_tpu(i)
+    cores(i).io.in_direct := io.in_direct(i)
+    cores(i).io.input_mode := io.input_mode
     cores(i).io.in_valid := io.in_valid(i)
     cores(i).io.param := effectiveParam(i)
-    cores(i).io.act_en := io.act_en
+    cores(i).io.act_mask := io.act_mask
+    cores(i).io.fusion_second := io.fusion_second
     cores(i).io.stall := io.stall
 
     cores(i).io.lut_wr_en := io.lut_wr_en
@@ -326,7 +350,10 @@ class QuantActUnit(
 
     io.out_vec(i) := cores(i).io.out_qact
     io.out_valid(i) := cores(i).io.out_valid
+    io.out_lookahead(i) := cores(i).io.out_lookahead
   }
+
+  io.busy := VecInit(cores.map(_.io.busy)).asUInt.orR
 
   io.lut_ready :=
     VecInit(cores.map(_.io.lut_ready)).asUInt.andR
@@ -343,7 +370,7 @@ class QuantActUnit(
     perChannel && inputFire && !tileStart && !activeValid
 
   val unexpectedResponse =
-    io.qparam_line_valid &&
+    perChannel && io.qparam_line_valid &&
     shadowValid &&
     !consumeShadow
 
