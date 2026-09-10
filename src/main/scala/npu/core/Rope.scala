@@ -152,10 +152,9 @@ class RopePairCore(
 //   Current row position is active/base + rowCounter.
 //
 // Frequency:
-//   one 64-byte FB line = 32 x UInt16 frequencies.
-//   8 frequencies are used by one 16-column output tile.
-//   Therefore one line contains 4 tile-frequency groups.
-//   active line is locally indexed; shadow line prefetches the next 64B line.
+//   one 32-byte FB block = 16 x UInt16 frequencies.
+//   One accepted beat uses 8 frequencies, so lower/upper halves serve two
+//   consecutive accepted beats. Request cadence follows accepted beats only.
 //
 // Frequency fixed-point contract:
 //   UInt16 Q0.16 turns/token
@@ -179,10 +178,8 @@ class RopeUnit(
   require(writeBits % trigBits == 0)
 
   private val numPairs = numLines / 2
-  private val freqsPerLine = 512 / freqBits
-  private val groupsPerLine = freqsPerLine / numPairs
-  require(freqsPerLine == 32)
-  require(groupsPerLine == 4)
+  private val freqsPerBlock = 256 / freqBits
+  require(freqsPerBlock == 16)
 
   private val wordsPerBurst = writeBits / trigBits
   private val burstAddrBits =
@@ -203,10 +200,10 @@ class RopeUnit(
     val position_init = Input(Bool())
     val base_m_in     = Input(UInt(mBits.W))
 
-    // FB line interface: 64B = 32 x 16-bit frequencies.
-    val freq_req_line   = Output(Bool())
-    val freq_line_in    = Input(Vec(freqsPerLine, UInt(freqBits.W)))
-    val freq_line_valid = Input(Bool())
+    // FB block interface: 32B = 16 x 16-bit frequencies.
+    val freq_req_block   = Output(Bool())
+    val freq_block_in    = Input(Vec(freqsPerBlock, UInt(freqBits.W)))
+    val freq_block_valid = Input(Bool())
 
     val lut_cos_wr_en = Input(Bool())
     val lut_sin_wr_en = Input(Bool())
@@ -284,76 +281,66 @@ class RopeUnit(
     effectiveMBase + rowCounter
 
   // ==========================================================================
-  // Frequency 64B line shadow / active.
+  // Frequency 32B block shadow / active.
   // ==========================================================================
-  val activeFreqLine =
-    RegInit(VecInit(Seq.fill(freqsPerLine)(0.U(freqBits.W))))
+  val activeFreqBlock =
+    RegInit(VecInit(Seq.fill(freqsPerBlock)(0.U(freqBits.W))))
 
-  val shadowFreqLine =
-    RegInit(VecInit(Seq.fill(freqsPerLine)(0.U(freqBits.W))))
+  val shadowFreqBlock =
+    RegInit(VecInit(Seq.fill(freqsPerBlock)(0.U(freqBits.W))))
 
   val activeFreqValid = RegInit(false.B)
   val shadowFreqValid = RegInit(false.B)
   val freqReqOutstanding = RegInit(false.B)
+  val freqHalf = RegInit(false.B)
 
-  // Index of the frequency group used by the current tile inside active line.
-  val freqGroup = RegInit(0.U(2.W))
-
-  // First tile consumes shadow line group0. Every fourth tile after that consumes
-  // the next shadow line group0.
-  val consumeFreqLine =
-    tileStart &&
-    (!activeFreqValid || (freqGroup === 3.U))
-
-  val nextGroup =
-    Mux(
-      !activeFreqValid || (freqGroup === 3.U),
-      0.U(2.W),
-      freqGroup + 1.U
-    )
-
-  io.freq_req_line :=
+  // Initial preload requests the active block. In steady state, accepting the
+  // lower half requests the next block if a shadow is not already available.
+  io.freq_req_block :=
     io.rope_en &&
     !freqReqOutstanding &&
-    (!shadowFreqValid || consumeFreqLine)
+    (!activeFreqValid || (inputFire && !freqHalf && !shadowFreqValid))
+
+  val completesBlock = inputFire && freqHalf
+  val nextBlockAvailable = shadowFreqValid || io.freq_block_valid
+  val nextBlock = Mux(io.freq_block_valid, io.freq_block_in, shadowFreqBlock)
 
   when(io.soft_reset) {
     activeFreqValid := false.B
     shadowFreqValid := false.B
     freqReqOutstanding := false.B
-    freqGroup := 0.U
+    freqHalf := false.B
   }.otherwise {
-    when(io.freq_req_line) {
+    when(io.freq_req_block) {
       freqReqOutstanding := true.B
     }
 
-    when(tileStart) {
-      when(consumeFreqLine) {
-        when(shadowFreqValid) {
-          activeFreqLine := shadowFreqLine
-          activeFreqValid := true.B
+    when(inputFire) {
+      when(freqHalf) {
+        freqHalf := false.B
+        activeFreqValid := nextBlockAvailable
+        when(nextBlockAvailable) {
+          activeFreqBlock := nextBlock
         }
         shadowFreqValid := false.B
-        freqGroup := 0.U
       }.otherwise {
-        freqGroup := freqGroup + 1.U
+        freqHalf := true.B
       }
     }
 
-    // Response priority refills shadow after same-cycle line consumption.
-    when(io.freq_line_valid) {
-      shadowFreqLine := io.freq_line_in
-      shadowFreqValid := true.B
+    // A response may arrive during stall. A response on the same edge that the
+    // upper half completes bypasses shadow state through nextBlock above.
+    when(io.freq_block_valid) {
       freqReqOutstanding := false.B
+      when(!activeFreqValid) {
+        activeFreqBlock := io.freq_block_in
+        activeFreqValid := true.B
+      }.elsewhen(!completesBlock) {
+        shadowFreqBlock := io.freq_block_in
+        shadowFreqValid := true.B
+      }
     }
   }
-
-  // Current beat must use the NEW line/group on tileStart.
-  val groupForBeat =
-    Mux(tileStart, nextGroup, freqGroup)
-
-  val useShadowLine =
-    consumeFreqLine
 
   // ==========================================================================
   // 8 parallel RoPE pairs.
@@ -372,14 +359,10 @@ class RopeUnit(
 
   for (p <- 0 until numPairs) {
     val freqIndex =
-      (groupForBeat << 3) + p.U
+      Mux(freqHalf, (numPairs + p).U, p.U)
 
     val theta =
-      Mux(
-        useShadowLine,
-        shadowFreqLine(freqIndex),
-        activeFreqLine(freqIndex)
-      )
+      activeFreqBlock(freqIndex)
 
     val phaseProduct =
       currentM * theta
@@ -422,7 +405,7 @@ class RopeUnit(
 
   when(io.soft_reset || !io.rope_en) {
     primed := false.B
-  }.elsewhen(shadowMValid && shadowFreqValid) {
+  }.elsewhen(shadowMValid && activeFreqValid) {
     primed := true.B
   }
 
@@ -450,14 +433,13 @@ class RopeUnit(
     !positionSwap &&
     !activeMValid
 
-  val freqLineMissing =
-    consumeFreqLine &&
-    !shadowFreqValid
+  val freqBlockMissing =
+    completesBlock &&
+    !nextBlockAvailable
 
   val unexpectedFreqResponse =
-    io.freq_line_valid &&
-    shadowFreqValid &&
-    !consumeFreqLine
+    io.freq_block_valid &&
+    !freqReqOutstanding
 
   val inputBeforePrimed =
     inputFire &&
@@ -469,7 +451,7 @@ class RopeUnit(
     rowUpdateMisaligned ||
     rowUpdateWithoutPosition ||
     firstRowWithoutPosition ||
-    freqLineMissing ||
+    freqBlockMissing ||
     unexpectedFreqResponse ||
     inputBeforePrimed
 }

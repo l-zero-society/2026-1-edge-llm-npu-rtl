@@ -986,7 +986,7 @@ class NormUnitDistributedTest
         .poke(false.B)
     }
 
-    dut.io.phase1_rope_param_update_in
+    dut.io.phase1_row_change_update_in
       .poke(false.B)
   }
 
@@ -1013,7 +1013,7 @@ class NormUnitDistributedTest
         .poke(true.B)
     }
 
-    dut.io.phase1_rope_param_update_in
+    dut.io.phase1_row_change_update_in
       .poke(
         vector
           .metadata(beat)
@@ -1527,7 +1527,7 @@ class NormUnitDistributedTest
         }
 
         dut.io
-          .phase2_rope_param_update_out
+          .phase2_row_change_update_out
           .expect(false.B)
 
       } else if (visibleOut) {
@@ -1571,7 +1571,7 @@ class NormUnitDistributedTest
         }
 
         dut.io
-          .phase2_rope_param_update_out
+          .phase2_row_change_update_out
           .expect(
             exp.metadata.B
           )
@@ -1590,7 +1590,7 @@ class NormUnitDistributedTest
         }
 
         dut.io
-          .phase2_rope_param_update_out
+          .phase2_row_change_update_out
           .expect(false.B)
       }
 

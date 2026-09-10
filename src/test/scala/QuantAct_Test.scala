@@ -167,7 +167,14 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
       val lineB = Array.tabulate(NumLines) { lane =>
         packParam(5 + (lane % 5), 4 + (lane % 2), 7 - lane)
       }
-      val qbLines = Array(lineA, lineB)
+      // A partial final N tile is still a complete 16 x UInt32 QB response.
+      // Lanes 0..4 are real; lanes 5..15 are compiler-provided padding whose
+      // output is discarded by the existing downstream lane mask.
+      val paddedFinalLine = Array.tabulate(NumLines) { lane =>
+        if (lane < 5) packParam(9 + lane, 5, lane - 2)
+        else packParam(0, 0, 0)
+      }
+      val qbLines = Array(lineA, lineB, paddedFinalLine)
       var nextQbLine = 0
       var pendingResponse: Option[Array[BigInt]] = None
       var requestCount = 0
@@ -183,8 +190,8 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
 
       def sampleRequest(): Option[Array[BigInt]] = {
         if (dut.io.qparam_req_line.peek().litToBoolean) {
-          val line = qbLines(nextQbLine)
-          nextQbLine = (nextQbLine + 1) % qbLines.length
+          val line = qbLines(nextQbLine % qbLines.length)
+          nextQbLine += 1
           requestCount += 1
           Some(line)
         } else None

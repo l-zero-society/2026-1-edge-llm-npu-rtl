@@ -627,7 +627,7 @@ class NormUnitOnlineTest extends AnyFlatSpec with ChiselScalatestTester {
         .poke(false.B)
     }
 
-    dut.io.phase1_rope_param_update_in
+    dut.io.phase1_row_change_update_in
       .poke(false.B)
   }
 
@@ -645,7 +645,7 @@ class NormUnitOnlineTest extends AnyFlatSpec with ChiselScalatestTester {
         .poke(true.B)
     }
 
-    dut.io.phase1_rope_param_update_in
+    dut.io.phase1_row_change_update_in
       .poke(isLast.B)
   }
 
@@ -1006,7 +1006,7 @@ class NormUnitOnlineTest extends AnyFlatSpec with ChiselScalatestTester {
             id.beat ==
             BeatsPerRow - 1
 
-          dut.io.phase2_rope_param_update_out
+          dut.io.phase2_row_change_update_out
             .expect(expectedMeta.B)
 
           outputBeatCount += 1
@@ -1017,7 +1017,7 @@ class NormUnitOnlineTest extends AnyFlatSpec with ChiselScalatestTester {
               .expect(false.B)
           }
 
-          dut.io.phase2_rope_param_update_out
+          dut.io.phase2_row_change_update_out
             .expect(false.B)
       }
 

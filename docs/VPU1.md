@@ -24,7 +24,7 @@ DIRECT는 [-256,254]의 ADD 결과를 signed INT10으로 보존한다.
 QuantAct 입력은 `in_tpu: Vec(16, SInt(32.W))`,
 `in_direct: Vec(16, SInt(10.W))`, 공통 `in_valid`이다.
 TPU requant 공식은 `((input - zeroPoint) * multiplier) >> shift`이다.
-기존 packed parameter 형식은 유지한다.
+qparam은 두 mode에서 동일한 4B `UInt32` 형식만 사용한다.
 
 | 필드 | 비트 | 해석 |
 | --- | --- | --- |
@@ -32,6 +32,13 @@ TPU requant 공식은 `((input - zeroPoint) * multiplier) >> shift`이다.
 | reserved | 15:13 | 사용하지 않음 |
 | shift | 12:8 | unsigned 5bit |
 | zeroPoint | 7:0 | signed INT8 |
+
+- PER_MATRIX: descriptor의 `matrix_param` 4B 하나를 16 lane에 broadcast하며 QB를 읽지 않는다.
+- PER_CHANNEL: lane마다 4B, 총 `16 × 4B = 64B`를 QB에서 한 번에 읽는다.
+- DIRECT: qparam을 완전히 무시하며 QB를 읽지 않는다.
+
+N이 16의 배수가 아니면 compiler가 마지막 64B block의 남은 qparam을 채운다.
+하드웨어는 partial QB transaction을 만들지 않으며 기존 output mask가 invalid lane을 버린다.
 
 `act_mask(0)`는 첫 GEMM, `act_mask(1)`은 두 번째 GEMM에 적용하며
 `fusion_second`로 선택한다. Activation OFF는 signed INT8 saturation,
@@ -72,6 +79,8 @@ make gpalu-test   # signed ALU / clip / direct 강제 설정 / stall
 make quant-test   # requant / fusion mask / QB / LUT 전체 주소 / stall
 make vpu1-test    # 두 경로 / VB lookahead / fusion / route / drain
 make vpu1-tests   # 위 세 suite를 한 번의 sbt 실행으로 수행
+make vpu-stage-test # production VPU1 두 경로 / VPU2 ONLINE RoPE gating
+make production-compile # 현재 production VPU/Compute 배선 컴파일
 ```
 
 로컬 또는 컨테이너 내부 sbt를 직접 쓰려면 `make vpu1-tests RTL_SBT=sbt`로 실행한다.
@@ -81,7 +90,18 @@ Harness는 busy 중 mode/route 변경 시 `control_alert`를 내고 기존 설�
 첫 GEMM 결과를 mock VB에 저장한 뒤 두 번째 GEMM과 결합하고, 동기 VB response와
 LUT response에 stall이 겹치는 경우를 검증한다.
 
-기존 production `VPU_Stage1`/`ComputeUnit`의 descriptor와 router 배선은 이번 단위
-모듈 변경에 포함하지 않는다. 해당 코드는 이전 QuantAct parameter-write 포트를
-참조하므로 새 인터페이스로의 별도 통합이 필요하다. 위 Makefile target들은 필요한
-소스만 선택해 이 legacy top과 독립적으로 compile/test한다.
+Production `VPU_Stage1`과 `ComputeUnit`도 동일한 고정 경로를 사용한다. `ComputeUnit`은
+QB의 512-bit response와 FB의 256-bit response를 별도 포트로 받고 PB에서 quant/RoPE
+parameter를 slice하지 않는다. TPU의 `row_change_update`는 VPU1 latency와 Normalizer의
+metadata FIFO를 거쳐 실제 RoPE data beat에 맞춰 전달된다.
+
+## VPU2 구성
+
+Production `VPU_Stage2`는 Normalizer 뒤에 RoPE를 연결한다. Normalizer phase 1 출력은
+NB로 보내고, phase 2 출력은 RoPE 입력으로 보낸다. Normalizer BYPASS에서는 VPU2 입력이
+RoPE로 바로 연결된다.
+
+RoPE는 `norm_layout=ONLINE`일 때만 `rope_en`을 받아 활성화된다.
+`norm_layout=DISTRIBUTED`에서는 RoPE를 강제로 bypass하고 FB request를 내지 않는다.
+`rope_active`와 상위 `vpu2_rope_active` 포트는 layout gating 이후의 실제 상태를
+나타낸다.

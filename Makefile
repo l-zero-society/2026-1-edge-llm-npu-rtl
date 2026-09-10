@@ -1,4 +1,4 @@
-.PHONY: up shell setup gen test down clean mxu-test tpu-test norm-test norm-distributed-test rope-test quant-test gpalu-test vpu1-test vpu1-tests
+.PHONY: up shell setup gen test down clean mxu-test tpu-test norm-test norm-distributed-test rope-test quant-test gpalu-test vpu1-test vpu1-tests vpu-stage-test param-ocm-test production-compile
 
 # Override for local sbt: make quant-test RTL_SBT=sbt
 RTL_SBT ?= docker exec lzero_rtl_env sbt
@@ -42,19 +42,19 @@ mxu-test:
 	  'testOnly npu.core.MxuOrchUnitTest'
 
 tpu-test:
-	docker exec -it lzero_rtl_env sbt \
+	$(RTL_SBT) \
 	  'set Compile / unmanagedSources ~= (_.filter(f => f.getName == "MXU.scala" || f.getName == "Orch.scala" || f.getName == "Accum.scala" || f.getName == "ComputeTimer.scala" || f.getName == "TPU.scala"))' \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "TPU_Test.scala"))' \
 	  'testOnly npu.top.TPUTopTest'
 
 norm-test:
-	docker exec -it lzero_rtl_env sbt \
+	$(RTL_SBT) \
 	  'set Compile / unmanagedSources ~= (_.filter(f => f.getName == "UniversalLUT.scala" || f.getName == "NormUnit.scala"))' \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "NormUnit_Test.scala"))' \
 	  'testOnly npu.core.NormUnitOnlineTest'
 
 norm-distributed-test:
-	docker exec -it lzero_rtl_env sbt \
+	$(RTL_SBT) \
 	  'set Compile / unmanagedSources ~= (_.filter(f => f.getName == "UniversalLUT.scala" || f.getName == "NormUnit.scala"))' \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "NormUnit_Distributed_Test.scala"))' \
 	  'testOnly npu.core.NormUnitDistributedTest'
@@ -62,7 +62,7 @@ norm-distributed-test:
 	  # 'testOnly npu.core.NormUnitDistributedTest -- -z "padded distributed Milakov Softmax"'
 
 rope-test:
-	docker exec -it lzero_rtl_env sbt \
+	$(RTL_SBT) \
 	  'set Compile / unmanagedSources ~= (_.filter(f => Set("Rope.scala", "UniversalLUT.scala").contains(f.getName)))' \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "Rope_Test.scala"))' \
 	  'testOnly npu.core.RopeUnitTest'
@@ -87,6 +87,24 @@ vpu1-tests:
 	$(RTL_SBT) $(VPU1_SOURCES) \
 	  'set Test / unmanagedSources ~= (_.filter(f => Set("GPALU_Test.scala", "QuantAct_Test.scala", "VPU1Route_Test.scala").contains(f.getName)))' \
 	  'testOnly npu.core.GPALUUnitTest npu.core.QuantActUnitTest npu.core.VPU1RouteTest'
+
+# Production VPU_Stage1/VPU_Stage2 composition and layout gating.
+vpu-stage-test:
+	$(RTL_SBT) \
+	  'set Compile / unmanagedSources ~= (_.filter(f => Set("VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala", "NormUnit.scala", "Rope.scala", "VPU.scala").contains(f.getName)))' \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "VPU_Test.scala"))' \
+	  'testOnly npu.top.VPUStageTest'
+
+param-ocm-test:
+	$(RTL_SBT) \
+	  'set Compile / unmanagedSources ~= (_.filter(_.getName == "LineParamOcm.scala"))' \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "LineParamOcm_Test.scala"))' \
+	  'testOnly npu.core.memory.LineParamOcmTest'
+
+production-compile:
+	$(RTL_SBT) \
+	  'set Compile / unmanagedSources ~= (_.filter(f => Set("MXU.scala", "Orch.scala", "Accum.scala", "ComputeTimer.scala", "TPU.scala", "Transposer.scala", "VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala", "NormUnit.scala", "Rope.scala", "LineParamOcm.scala", "Ocm.scala", "VPU.scala", "Comp.scala").contains(f.getName)))' \
+	  compile
 
 # 5. 종료
 down:

@@ -20,7 +20,7 @@ object NormMode {
 // ONLINE:
 //   16 lanes are 16 independent normalization contexts.
 //   One element per lane is accepted per beat.
-//   phase1_last is generated from rope_param_update.
+//   phase1_last is generated from row_change_update metadata.
 //
 // DISTRIBUTED:
 //   16 lanes are 16 pieces of ONE logical vector.
@@ -715,7 +715,7 @@ class NormDistPhase2ContextFifo(
 // Supported layouts:
 //   ONLINE:
 //     16 lanes = 16 independent vectors.
-//     phase1_last = phase1_rope_param_update_in.
+//     phase1_last = phase1_row_change_update_in.
 //
 //   DISTRIBUTED:
 //     16 lanes = one vector split across lanes.
@@ -815,7 +815,7 @@ class UniversalNormUnit(
     //
     // DISTRIBUTED:
     //   metadata only; vector boundary is generated internally.
-    val phase1_rope_param_update_in =
+    val phase1_row_change_update_in =
       Input(Bool())
 
     val phase1_out_vec =
@@ -839,7 +839,7 @@ class UniversalNormUnit(
     val phase2_out_valid_vec =
       Output(Vec(numLines, Bool()))
 
-    val phase2_rope_param_update_out =
+    val phase2_row_change_update_out =
       Output(Bool())
 
     // ------------------------------------------------------------------------
@@ -969,7 +969,7 @@ class UniversalNormUnit(
   val onlineLastBeat =
     phase1Fire &&
     isOnline &&
-    io.phase1_rope_param_update_in
+    io.phase1_row_change_update_in
 
   val phase1Last =
     onlineLastBeat || distributedLastBeat
@@ -1054,7 +1054,7 @@ class UniversalNormUnit(
     phase1Fire
 
   metaFifo.io.enq_bits :=
-    io.phase1_rope_param_update_in
+    io.phase1_row_change_update_in
 
   metaFifo.io.deq_ready :=
     phase2Fire
@@ -2941,7 +2941,7 @@ class UniversalNormUnit(
       visibleOutValid
   }
 
-  io.phase2_rope_param_update_out :=
+  io.phase2_row_change_update_out :=
     visibleOutValid &&
     Mux(
       outHoldValid,

@@ -9,6 +9,13 @@ object QuantParamMode {
   val PER_CHANNEL = 1.U(1.W)
 }
 
+object QuantParamFormat {
+  val Bits = 32
+  val Bytes = Bits / 8
+  val ChannelsPerQbRead = 16
+  val QbReadBytes = Bytes * ChannelsPerQbRead
+}
+
 // One shared activation LUT per lane, with four enabled edges of latency.
 // TPU: signed requant -> INT8 saturation or signed INT10 activation.
 // DIRECT: signed INT10 -> activation, independently of all qparams.
@@ -25,6 +32,7 @@ class QuantActCore(
 ) extends Module {
 
   require(inBits == 32 && outBits == 8 && indexBits == 10)
+  require(QuantParamFormat.Bits == 32)
 
   private val numEntries = 1 << indexBits
   private val wordsPerBurst = writeBits / outBits
@@ -36,7 +44,9 @@ class QuantActCore(
     val in_direct = Input(SInt(10.W))
     val input_mode = Input(UInt(1.W))
     val in_valid = Input(Bool())
-    val param    = Input(UInt(32.W))
+    // Canonical qparam: multiplier[31:16], reserved[15:13], shift[12:8],
+    // signed zeroPoint[7:0]. Both quantization modes use this exact format.
+    val param    = Input(UInt(QuantParamFormat.Bits.W))
     val act_mask = Input(UInt(2.W))
     val fusion_second = Input(Bool())
     val stall    = Input(Bool())
@@ -193,8 +203,9 @@ class QuantActUnit(
   val outBits: Int = 8
 ) extends Module {
 
-  require(numLines == 16)
+  require(numLines == QuantParamFormat.ChannelsPerQbRead)
   require(inBits == 32 && outBits == 8 && indexBits == 10)
+  require(QuantParamFormat.QbReadBytes == 64)
 
   private val wordsPerBurst = writeBits / outBits
   private val burstAddrBits =
@@ -207,16 +218,18 @@ class QuantActUnit(
     val in_valid = Input(Vec(numLines, Bool()))
 
     val param_mode   = Input(UInt(1.W))
-    val matrix_param = Input(UInt(32.W))
+    // PER_MATRIX is one 4B descriptor value broadcast to all lanes.
+    val matrix_param = Input(UInt(QuantParamFormat.Bits.W))
     val act_mask     = Input(UInt(2.W))
     val fusion_second = Input(Bool())
 
     val stall      = Input(Bool())
     val soft_reset = Input(Bool())
 
-    // QB 64-byte line interface.
+    // PER_CHANNEL is exactly one 64B QB read: 16 x canonical UInt32.
+    // Software pads the final N tile; the hardware never issues a partial read.
     val qparam_req_line = Output(Bool())
-    val qparam_line_in = Input(Vec(numLines, UInt(32.W)))
+    val qparam_line_in = Input(Vec(numLines, UInt(QuantParamFormat.Bits.W)))
     val qparam_line_valid = Input(Bool())
 
     val lut_wr_en   = Input(Bool())
@@ -258,10 +271,10 @@ class QuantActUnit(
   }
 
   val activeParam =
-    RegInit(VecInit(Seq.fill(numLines)(0.U(32.W))))
+    RegInit(VecInit(Seq.fill(numLines)(0.U(QuantParamFormat.Bits.W))))
 
   val shadowParam =
-    RegInit(VecInit(Seq.fill(numLines)(0.U(32.W))))
+    RegInit(VecInit(Seq.fill(numLines)(0.U(QuantParamFormat.Bits.W))))
 
   val activeValid = RegInit(false.B)
   val shadowValid = RegInit(false.B)
@@ -306,7 +319,7 @@ class QuantActUnit(
 
   // Update-cycle bypass: row0 of a new tile uses shadow directly.
   val effectiveParam =
-    Wire(Vec(numLines, UInt(32.W)))
+    Wire(Vec(numLines, UInt(QuantParamFormat.Bits.W)))
 
   for (i <- 0 until numLines) {
     effectiveParam(i) :=

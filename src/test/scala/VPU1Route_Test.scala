@@ -6,8 +6,8 @@ import chiseltest._
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.collection.mutable
 
-// Integration-only harness: the production ComputeUnit/VPU_Stage1 still uses
-// the legacy descriptor interface. No second activation LUT or operand delay.
+// Exhaustive route/control harness. VPU_Test.scala separately verifies that the
+// production VPU_Stage1 exposes these same two fixed datapaths.
 class VPU1RouteHarness extends Module {
   val io = IO(new Bundle {
     val tpu = Input(Vec(16, SInt(32.W)))
