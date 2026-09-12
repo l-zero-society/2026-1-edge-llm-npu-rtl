@@ -1,8 +1,9 @@
-.PHONY: up shell setup gen test down clean mxu-test tpu-test norm-test norm-distributed-test rope-test quant-test gpalu-test vpu1-test vpu1-tests vpu-stage-test param-ocm-test production-compile
+.PHONY: up shell setup gen test down clean mxu-test tpu-test norm-test norm-distributed-test rope-test quant-test gpalu-test vpu1-test vpu1-tests vpu-stage-test param-ocm-test production-compile zero-padder-test compactor-test lut-program-test compute-unit-test compute-regression
 
 # Override for local sbt: make quant-test RTL_SBT=sbt
-RTL_SBT ?= docker exec lzero_rtl_env sbt
+RTL_SBT ?= docker exec -e MAKEFLAGS lzero_rtl_env sbt
 VPU1_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(f => Set("VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala").contains(f.getName)))'
+COMPUTE_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(f => Set("MXU.scala", "Orch.scala", "Accum.scala", "ComputeTimer.scala", "TPU.scala", "Transposer.scala", "ZeroPadder.scala", "Compactor.scala", "LutProgrammingController.scala", "VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala", "NormUnit.scala", "Rope.scala", "LineParamOcm.scala", "Ocm.scala", "VPU.scala", "Comp.scala").contains(f.getName)))'
 
 # L-ZERO RTL Track 간편 명령어 세트
 # 1. 환경 빌드 및 실행
@@ -102,9 +103,38 @@ param-ocm-test:
 	  'testOnly npu.core.memory.LineParamOcmTest'
 
 production-compile:
+	$(RTL_SBT) $(COMPUTE_SOURCES) compile
+
+zero-padder-test:
 	$(RTL_SBT) \
-	  'set Compile / unmanagedSources ~= (_.filter(f => Set("MXU.scala", "Orch.scala", "Accum.scala", "ComputeTimer.scala", "TPU.scala", "Transposer.scala", "VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala", "NormUnit.scala", "Rope.scala", "LineParamOcm.scala", "Ocm.scala", "VPU.scala", "Comp.scala").contains(f.getName)))' \
-	  compile
+	  'set Compile / unmanagedSources ~= (_.filter(_.getName == "ZeroPadder.scala"))' \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "ZeroPadder_Test.scala"))' \
+	  'testOnly npu.core.ZeroPadderTest'
+
+compactor-test:
+	$(RTL_SBT) \
+	  'set Compile / unmanagedSources ~= (_.filter(_.getName == "Compactor.scala"))' \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "Compactor_Test.scala"))' \
+	  'testOnly npu.core.CompactorTest'
+
+lut-program-test:
+	$(RTL_SBT) \
+	  'set Compile / unmanagedSources ~= (_.filter(f => Set("LutProgrammingController.scala", "UniversalLUT.scala").contains(f.getName)))' \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "LutProgrammingController_Test.scala"))' \
+	  'testOnly npu.core.LutProgrammingControllerTest'
+
+# chiseltest 6 forces a top-header include, which prevents GCC from using
+# Verilator 5.020's PCH. Disable only the PCH include flags in this child build.
+# Export through docker exec as well as local RTL_SBT=sbt invocations.
+compute-unit-test tpu-test quant-test rope-test vpu1-test vpu1-tests norm-test norm-distributed-test: export MAKEFLAGS += VK_PCH_I_FAST= VK_PCH_I_SLOW=
+compute-unit-test:
+	$(RTL_SBT) $(COMPUTE_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "ComputeUnit_Test.scala"))' \
+	  'testOnly npu.top.ComputeUnitTest'
+
+# Sequential invocations avoid concurrent sbt writes into the same target tree.
+compute-regression:
+	$(MAKE) -j1 zero-padder-test compactor-test lut-program-test compute-unit-test vpu-stage-test tpu-test vpu1-tests quant-test rope-test norm-test norm-distributed-test param-ocm-test production-compile
 
 # 5. 종료
 down:

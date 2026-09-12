@@ -9,7 +9,7 @@ import npu.core._
 // DIRECT : UB/WB INT8 -> forced ADD INT10 -> QuantAct LUT -> INT8
 class VPU_Stage1(
   val numLines: Int = 16,
-  val writeBits: Int = 256,
+  val writeBits: Int = 128,
   val quantIndexBits: Int = 10
 ) extends Module {
   require(numLines == 16)
@@ -137,7 +137,7 @@ class VPU_Stage1(
 class VPU_Stage2(
   val numLines: Int = 16,
   val vectorSize: Int = 4096,
-  val writeBits: Int = 256,
+  val writeBits: Int = 128,
   val normIndexBits: Int = 8,
   val ropeIndexBits: Int = 10
 ) extends Module {

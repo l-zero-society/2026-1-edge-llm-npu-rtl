@@ -95,6 +95,10 @@ QB의 512-bit response와 FB의 256-bit response를 별도 포트로 받고 PB�
 parameter를 slice하지 않는다. TPU의 `row_change_update`는 VPU1 latency와 Normalizer의
 metadata FIFO를 거쳐 실제 RoPE data beat에 맞춰 전달된다.
 
+Production LUT write는 WB 기반 128-bit stream이다. Act는 16 x UInt8/64개 write 주소,
+Norm은 8 x UInt16/32개 주소, RoPE는 8 x UInt16/128개 주소를 사용한다.
+전체 routing 및 프로그래밍 제어는 [ComputeUnit.md](ComputeUnit.md)를 참조한다.
+
 ## VPU2 구성
 
 Production `VPU_Stage2`는 Normalizer 뒤에 RoPE를 연결한다. Normalizer phase 1 출력은

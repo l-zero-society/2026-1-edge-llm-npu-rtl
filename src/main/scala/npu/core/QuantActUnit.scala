@@ -197,7 +197,7 @@ class QuantActCore(
 // ============================================================================
 class QuantActUnit(
   val numLines: Int = 16,
-  val writeBits: Int = 256,
+  val writeBits: Int = 128,
   val indexBits: Int = 10,
   val inBits: Int = 32,
   val outBits: Int = 8

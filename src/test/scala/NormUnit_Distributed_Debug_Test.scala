@@ -21,7 +21,7 @@ class NormUnitDistributedDebugTest
   private val OutBits        = 8
   private val IndexBits      = 6   // 64 entries: faster simulation than 256
   private val DataBits       = 16
-  private val WriteBits      = 256
+  private val WriteBits      = 128
   private val LutFracBits    = 14
   private val InvBits        = 24
   private val InvFracBits    = 20

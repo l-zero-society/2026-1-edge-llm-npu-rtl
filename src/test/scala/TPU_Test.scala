@@ -2,6 +2,7 @@ package npu.top
 
 import chisel3._
 import chiseltest._
+import chiseltest.simulator.VerilatorBackendAnnotation
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.util.Random
 
@@ -294,7 +295,7 @@ class TPUTopTest
         inBits = 8,
         accBits = 32
       )
-    ) { dut =>
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       runScenario(
         dut = dut,
         dim = dim,
@@ -318,7 +319,7 @@ class TPUTopTest
         inBits = 8,
         accBits = 32
       )
-    ) { dut =>
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       runScenario(
         dut = dut,
         dim = dim,
@@ -342,7 +343,7 @@ class TPUTopTest
         inBits = 8,
         accBits = 32
       )
-    ) { dut =>
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       runScenario(
         dut = dut,
         dim = dim,
@@ -369,7 +370,7 @@ class TPUTopTest
         inBits = 8,
         accBits = 32
       )
-    ) { dut =>
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       runScenario(
         dut = dut,
         dim = dim,

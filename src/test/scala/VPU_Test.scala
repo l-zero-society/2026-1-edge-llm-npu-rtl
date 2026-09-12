@@ -40,12 +40,12 @@ class VPUStageTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   private def programActivationLut(dut: VPU_Stage1): Unit = {
-    for (burst <- 0 until 32) {
+    for (burst <- 0 until 64) {
       dut.io.quant_lut_wr_en.poke(true.B)
       dut.io.quant_lut_wr_addr.poke(burst.U)
-      for (word <- 0 until 32) {
+      for (word <- 0 until 16) {
         dut.io.quant_lut_wr_data(word)
-          .poke(activationLut(burst * 32 + word).U)
+          .poke(activationLut(burst * 16 + word).U)
       }
       dut.clock.step()
       dut.io.fatal_alert.expect(false.B)

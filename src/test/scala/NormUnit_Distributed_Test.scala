@@ -2,6 +2,7 @@ package npu.core
 
 import chisel3._
 import chiseltest._
+import chiseltest.simulator.VerilatorBackendAnnotation
 import org.scalatest.flatspec.AnyFlatSpec
 
 import scala.collection.mutable
@@ -21,7 +22,7 @@ class NormUnitDistributedTest
   private val OutBits        = 8
   private val IndexBits      = 6   // 64 entries: faster simulation than 256
   private val DataBits       = 16
-  private val WriteBits      = 256
+  private val WriteBits      = 128
   private val LutFracBits    = 14
   private val InvBits        = 24
   private val InvFracBits    = 20
@@ -2001,7 +2002,7 @@ class NormUnitDistributedTest
         metadataDepth =
           MetadataDepth
       )
-    ) {
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) {
       dut =>
 
         configureAndProgram(
@@ -2109,7 +2110,7 @@ class NormUnitDistributedTest
         metadataDepth =
           MetadataDepth
       )
-    ) {
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) {
       dut =>
 
         configureAndProgram(
@@ -2205,7 +2206,7 @@ class NormUnitDistributedTest
         metadataDepth =
           MetadataDepth
       )
-    ) {
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) {
       dut =>
 
         configureAndProgram(
@@ -2296,7 +2297,7 @@ class NormUnitDistributedTest
         metadataDepth =
           MetadataDepth
       )
-    ) {
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) {
       dut =>
 
         configureAndProgram(
@@ -2393,7 +2394,7 @@ class NormUnitDistributedTest
         metadataDepth =
           MetadataDepth
       )
-    ) {
+    ).withAnnotations(Seq(VerilatorBackendAnnotation)) {
       dut =>
 
         configureAndProgram(

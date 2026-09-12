@@ -166,7 +166,7 @@ class RopeUnit(
   val outBits: Int = 8,
   val indexBits: Int = 10,
   val trigBits: Int = 16,
-  val writeBits: Int = 256,
+  val writeBits: Int = 128,
   val trigFracBits: Int = 14,
   val freqBits: Int = 16,
   val mBits: Int = 32

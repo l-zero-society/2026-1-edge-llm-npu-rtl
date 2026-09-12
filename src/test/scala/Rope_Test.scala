@@ -2,6 +2,7 @@ package npu.core
 
 import chisel3._
 import chiseltest._
+import chiseltest.simulator.VerilatorBackendAnnotation
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.collection.mutable
 
@@ -13,7 +14,7 @@ class RopeUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   private val IndexBits = 10
   private val TrigBits = 16
   private val TrigFracBits = 14
-  private val WriteBits = 256
+  private val WriteBits = 128
   private val FreqBits = 16
   private val LutEntries = 1 << IndexBits
   private val LutWordsPerBurst = WriteBits / TrigBits
@@ -115,7 +116,7 @@ class RopeUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "bypass data and valid when disabled without requesting FB" in {
-    test(new RopeUnit()) { dut =>
+    test(new RopeUnit()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       for (lane <- 0 until NumLines) {
         val x = lane - 8
@@ -130,7 +131,7 @@ class RopeUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "fetch one 32B block for every two accepted beats and preserve position and data through stalls" in {
-    test(new RopeUnit()) { dut =>
+    test(new RopeUnit()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       dut.clock.setTimeout(0)
       pokeIdle(dut)
       dut.io.soft_reset.poke(true.B)
@@ -235,7 +236,7 @@ class RopeUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "hold half state across bubbles, suppress duplicate requests, and flag a missing next block" in {
-    test(new RopeUnit()) { dut =>
+    test(new RopeUnit()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       val first = Array.tabulate(16)(i => i + 1)
       preload(dut, baseM = 0, first)
@@ -264,7 +265,7 @@ class RopeUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "raise DFD when traffic starts before position and frequency preload" in {
-    test(new RopeUnit()) { dut =>
+    test(new RopeUnit()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       dut.io.rope_en.poke(true.B)
       dut.io.in_valid.foreach(_.poke(true.B))

@@ -1,54 +1,33 @@
-import chisel3._
-import chisel3.util._
+package npu.core
 
-class vectomat extends Module {
+import chisel3._
+
+// Online M=1 extraction: retain row0 of each tile, drop rows1..15.
+// No tile collection or data storage. Hold compact_en until the tile drains.
+class Compactor(val numLines: Int = 16) extends Module {
+  require(numLines == 16)
   val io = IO(new Bundle {
-    val in_vec    = Input(Vec(16, UInt(8.W)))
-    val out_vec   = Output(Vec(16, UInt(8.W)))
-    val in_valid  = Input(Bool())
+    val in_vec = Input(Vec(numLines, UInt(8.W)))
+    val in_valid = Input(Bool())
+    val compact_en = Input(Bool())
+    val stall = Input(Bool())
+    val soft_reset = Input(Bool())
+    val out_vec = Output(Vec(numLines, UInt(8.W)))
     val out_valid = Output(Bool())
+    val busy = Output(Bool())
+    val sync_alert = Output(Bool())
   })
 
-  val matreg = RegInit(
-    VecInit(Seq.fill(15)(VecInit(Seq.fill(16)(0.U(8.W)))))
-  )
+  val row = RegInit(0.U(4.W))
+  val fire = io.in_valid && !io.stall && !io.soft_reset
+  io.out_vec := io.in_vec
+  io.out_valid := fire && (!io.compact_en || row === 0.U)
+  io.busy := row =/= 0.U
+  io.sync_alert := !io.stall && !io.soft_reset && io.busy && !io.compact_en
 
-  // The first vector of each matrix occurs once per 16 valid vectors.
-  val (vectorCount, _) = Counter(io.in_valid, 16)
-  val firstVector = io.in_valid && vectorCount === 0.U
-
-  val collectCount = RegInit(0.U(4.W))
-  val outputActive = RegInit(false.B)
-  val outputIndex  = RegInit(0.U(4.W))
-
-  // Receive matrix 15's first vector while starting the first output.
-  val startOutput = firstVector && collectCount === 15.U
-
-  io.out_valid := startOutput || outputActive
-  io.out_vec   := Mux(startOutput, matreg(0), matreg(outputIndex))
-
-  when(firstVector) {
-    when(collectCount === 15.U) {
-      // Output the old matreg(0) and overwrite it on the same clock edge.
-      matreg(0)    := io.in_vec
-      collectCount := 0.U
-      outputActive := true.B
-      outputIndex  := 1.U
-    }.otherwise {
-      // Indexed write: update only the selected vector register.
-      matreg(collectCount) := io.in_vec
-      collectCount         := collectCount + 1.U
-    }
-  }
-
-  // Output matreg(1), ..., matreg(14), then matreg(0).
-  when(outputActive) {
-    when(outputIndex === 0.U) {
-      outputActive := false.B
-    }.elsewhen(outputIndex === 14.U) {
-      outputIndex := 0.U
-    }.otherwise {
-      outputIndex := outputIndex + 1.U
-    }
+  when(io.soft_reset) {
+    row := 0.U
+  }.elsewhen(io.compact_en && fire) {
+    row := row + 1.U
   }
 }

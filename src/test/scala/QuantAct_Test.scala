@@ -2,6 +2,7 @@ package npu.core
 
 import chisel3._
 import chiseltest._
+import chiseltest.simulator.VerilatorBackendAnnotation
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.collection.mutable
 
@@ -11,7 +12,7 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   private val NumLines = 16
   private val IndexBits = 10
   private val OutBits = 8
-  private val WriteBits = 256
+  private val WriteBits = 128
   private val LutEntries = 1 << IndexBits
   private val LutWordsPerBurst = WriteBits / OutBits
 
@@ -100,7 +101,7 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "broadcast one PER_MATRIX parameter and support activation LUT / linear bypass" in {
-    test(new QuantActUnit(numLines = NumLines, writeBits = WriteBits, indexBits = IndexBits, inBits = 32, outBits = OutBits)) { dut =>
+    test(new QuantActUnit(numLines = NumLines, writeBits = WriteBits, indexBits = IndexBits, inBits = 32, outBits = OutBits)).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       dut.io.soft_reset.poke(true.B)
       dut.clock.step()
@@ -150,7 +151,7 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "prefetch 64B PER_CHANNEL lines, swap shadow to active every 16 accepted rows, and tolerate stalls" in {
-    test(new QuantActUnit(numLines = NumLines, writeBits = WriteBits, indexBits = IndexBits, inBits = 32, outBits = OutBits)) { dut =>
+    test(new QuantActUnit(numLines = NumLines, writeBits = WriteBits, indexBits = IndexBits, inBits = 32, outBits = OutBits)).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       dut.io.soft_reset.poke(true.B)
       dut.clock.step()
@@ -268,7 +269,7 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "flag a partial-lane valid beat" in {
-    test(new QuantActUnit()) { dut =>
+    test(new QuantActUnit()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       dut.io.param_mode.poke(0.U)
       dut.io.matrix_param.poke(packParam(1, 2, 0).U)
@@ -278,7 +279,7 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "select all fusion mask bits and preserve signed requant extrema with four-cycle latency" in {
-    test(new QuantActUnit()) { dut =>
+    test(new QuantActUnit()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       val lut = Array.tabulate(LutEntries)(i => ((i * 29) ^ (i >> 3) ^ (i >> 8)) & 255)
       programActivationLut(dut, lut)
@@ -318,7 +319,7 @@ class QuantActUnitTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "force direct activation, ignore every qparam, and retain LUT responses across stalls" in {
-    test(new QuantActUnit()) { dut =>
+    test(new QuantActUnit()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       pokeIdle(dut)
       dut.io.input_mode.poke(1.U)
       dut.io.param_mode.poke(1.U)

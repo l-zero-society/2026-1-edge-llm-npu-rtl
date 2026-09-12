@@ -757,7 +757,7 @@ class NormDistPhase2ContextFifo(
 // ============================================================================
 class UniversalNormUnit(
   val numLines: Int = 16,
-  val writeBits: Int = 256,
+  val writeBits: Int = 128,
   val inBits: Int = 8,
   val outBits: Int = 8,
   val vectorSize: Int = 4096,        // maximum supported logical vector length

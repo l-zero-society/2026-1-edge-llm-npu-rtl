@@ -3,6 +3,7 @@ package npu.core
 import chisel3._
 import chisel3.util._
 import chiseltest._
+import chiseltest.simulator.VerilatorBackendAnnotation
 import org.scalatest.flatspec.AnyFlatSpec
 import scala.collection.mutable
 
@@ -29,8 +30,8 @@ class VPU1RouteHarness extends Module {
     val matrix_param = Input(UInt(32.W))
     val stall = Input(Bool())
     val lut_wr_en = Input(Bool())
-    val lut_wr_addr = Input(UInt(5.W))
-    val lut_wr_data = Input(Vec(32, UInt(8.W)))
+    val lut_wr_addr = Input(UInt(6.W))
+    val lut_wr_data = Input(Vec(16, UInt(8.W)))
     val result = Output(Vec(16, UInt(8.W)))
     val vb_valid = Output(Bool())
     val vpu2_valid = Output(Bool())
@@ -121,10 +122,10 @@ class VPU1RouteTest extends AnyFlatSpec with ChiselScalatestTester {
     dut.io.fusion_second.poke(false.B)
     dut.io.matrix_param.poke((BigInt(1) << 16).U)
     dut.io.stall.poke(false.B)
-    for (burst <- 0 until 32) {
+    for (burst <- 0 until 64) {
       dut.io.lut_wr_en.poke(true.B)
       dut.io.lut_wr_addr.poke(burst.U)
-      for (w <- 0 until 32) dut.io.lut_wr_data(w).poke(lut(burst * 32 + w).U)
+      for (w <- 0 until 16) dut.io.lut_wr_data(w).poke(lut(burst * 16 + w).U)
       dut.clock.step()
     }
     dut.io.lut_wr_en.poke(false.B)
@@ -132,7 +133,7 @@ class VPU1RouteTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "sustain both seven-cycle paths, align lookahead VB reads, and switch routes only after drain" in {
-    test(new VPU1RouteHarness) { dut =>
+    test(new VPU1RouteHarness).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       init(dut)
       // Persistent mock VB holds the first GEMM's result for fusion operand2.
       var vb = Vector.empty[Array[Int]]
@@ -242,7 +243,7 @@ class VPU1RouteTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "flag and reject mode or destination changes until the current pipeline drains" in {
-    test(new VPU1RouteHarness) { dut =>
+    test(new VPU1RouteHarness).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
       init(dut)
       dut.io.output_route.poke(1.U)
       dut.io.tpu.foreach(_.poke(42.S))
