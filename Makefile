@@ -1,4 +1,4 @@
-.PHONY: up shell setup gen test down clean mxu-test tpu-test norm-test norm-distributed-test rope-test quant-test gpalu-test vpu1-test vpu1-tests vpu-stage-test param-ocm-test production-compile zero-padder-test compactor-test lut-program-test compute-unit-test compute-regression
+.PHONY: up shell setup gen test down clean mxu-test tpu-test norm-test norm-distributed-test rope-test quant-test gpalu-test vpu1-test vpu1-tests vpu-stage-test param-ocm-test production-compile zero-padder-test compactor-test lut-program-test compute-unit-test compute-e2e-test compute-e2e-report compute-regression
 
 # Override for local sbt: make quant-test RTL_SBT=sbt
 RTL_SBT ?= docker exec -e MAKEFLAGS lzero_rtl_env sbt
@@ -126,15 +126,24 @@ lut-program-test:
 # chiseltest 6 forces a top-header include, which prevents GCC from using
 # Verilator 5.020's PCH. Disable only the PCH include flags in this child build.
 # Export through docker exec as well as local RTL_SBT=sbt invocations.
-compute-unit-test tpu-test quant-test rope-test vpu1-test vpu1-tests norm-test norm-distributed-test: export MAKEFLAGS += VK_PCH_I_FAST= VK_PCH_I_SLOW=
+compute-unit-test compute-e2e-test tpu-test quant-test rope-test vpu1-test vpu1-tests norm-test norm-distributed-test: export MAKEFLAGS += VK_PCH_I_FAST= VK_PCH_I_SLOW=
 compute-unit-test:
 	$(RTL_SBT) $(COMPUTE_SOURCES) \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "ComputeUnit_Test.scala"))' \
 	  'testOnly npu.top.ComputeUnitTest'
 
+compute-e2e-test:
+	$(RTL_SBT) $(COMPUTE_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "ComputeUnit_E2E_Test.scala"))' \
+	  'testOnly npu.top.ComputeUnitE2ETest'
+	$(MAKE) compute-e2e-report
+
+compute-e2e-report:
+	python3 scripts/render_compute_test_results.py
+
 # Sequential invocations avoid concurrent sbt writes into the same target tree.
 compute-regression:
-	$(MAKE) -j1 zero-padder-test compactor-test lut-program-test compute-unit-test vpu-stage-test tpu-test vpu1-tests quant-test rope-test norm-test norm-distributed-test param-ocm-test production-compile
+	$(MAKE) -j1 zero-padder-test compactor-test lut-program-test compute-unit-test compute-e2e-test vpu-stage-test tpu-test vpu1-tests quant-test rope-test norm-test norm-distributed-test param-ocm-test production-compile compute-e2e-report
 
 # 5. 종료
 down:

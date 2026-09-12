@@ -21,6 +21,7 @@ class VPUStageTest extends AnyFlatSpec with ChiselScalatestTester {
     dut.io.direct_b.foreach(_.poke(0.S))
     dut.io.direct_a_valid.poke(false.B)
     dut.io.direct_b_valid.poke(false.B)
+    dut.io.direct_row_change_update.poke(false.B)
     dut.io.vb_operand.foreach(_.poke(0.S))
     dut.io.vb_operand_valid.poke(false.B)
     dut.io.input_mode.poke(VPU1InputMode.TPU)
@@ -115,16 +116,18 @@ class VPUStageTest extends AnyFlatSpec with ChiselScalatestTester {
       }
       dut.io.direct_a_valid.poke(true.B)
       dut.io.direct_b_valid.poke(true.B)
+      dut.io.direct_row_change_update.poke(true.B)
       expectNoVpu1Output(dut)
       dut.clock.step()
       dut.io.direct_a_valid.poke(false.B)
       dut.io.direct_b_valid.poke(false.B)
+      dut.io.direct_row_change_update.poke(false.B)
       advanceToSevenCycleOutput(dut)
       for (lane <- 0 until NumLines) {
         val sum = directA(lane) + directB(lane)
         dut.io.out_vec(lane).expect(activationLut(sum + 512).U)
       }
-      dut.io.out_row_change_update.expect(false.B)
+      dut.io.out_row_change_update.expect(true.B)
       dut.io.qparam_req_line.expect(false.B)
       dut.io.vb_read_req.expect(false.B)
       dut.io.fatal_alert.expect(false.B)

@@ -74,7 +74,7 @@ MXU는 `X[M,K]`, `W[N,K]`에서 `Y[m,n]=dot(X[m,:],W[n,:])`를 계산한다.
 | Transpose | `ub_transpose_en`, `wb_transpose_en`, `output_transpose_en`: Bool | `ub_trans_ready`, `wb_trans_ready`, `comp_trans_ready`: bank write 가능, bypass이면 true |
 | Transpose stream | `ub_stream_en`, `wb_stream_en`, `comp_stream_en`: Bool | transpose 활성화 시에만 사용 |
 | M=1 compact | `vector_compact_in`, `vector_compact_out`: Bool | `zero_pad_busy`, `compactor_busy`: 현재 physical tile 미완료 |
-| VPU1 routing | `vpu1_en`: Bool; `vpu1_input_mode`: UInt1; `vpu1_output_route`: UInt2 | `vpu1_busy`, `vb_req`: Bool |
+| VPU1 routing | `vpu1_en`: Bool; `vpu1_input_mode`: UInt1; `vpu1_output_route`: UInt2; `direct_row_change_update`: Bool | `vpu1_busy`, `vb_req`: Bool |
 | VPU1 operation | `vpu1_param_mode`: UInt1; `matrix_quant_param`: UInt32; `vpu1_act_mask`: UInt2; `vpu1_fusion_second`: Bool; `vpu1_alu_mode`: UInt2; `vpu1_out_shift`: UInt5 | 기존 fusion/quant 규약 유지 |
 | QB | `qb_data`: Vec(16, UInt32), `qb_valid`: Bool | `qb_req`: 64B read request |
 | VPU2 routing | `vpu2_en`: Bool; `vpu2_input_sel`: UInt2 (0 NB, 1 UB/TR1, 2 VPU1) | `nb_req`, `vpu2_rope_active`: Bool |
@@ -89,6 +89,10 @@ MXU는 `X[M,K]`, `W[N,K]`에서 `Y[m,n]=dot(X[m,:],W[n,:])`를 계산한다.
 `tpu_en=0`으로 설정하므로 동일 UB/WB stream을 TPU가 소비하지 않는다.
 `tpu_input_tile_start`는 **TR1 이후 TPU 입력 stream의 row0**와 함께 공급한다.
 UB에서 transpose tile을 채우는 시점의 metadata를 자동 지연시키는 포트가 아니다.
+`direct_row_change_update`는 Central Control이 accepted DIRECT beat에 붙이는 semantic
+sideband다. VPU1 DIRECT에서는 matching data와 같은 7 enabled-edge pipeline을 지나고,
+VPU2 direct UB/NB에서는 accepted input beat와 함께 Normalizer metadata FIFO에 들어간다.
+DISTRIBUTED vector boundary는 이 bit가 아니라 `logical_vector_length`로 결정한다.
 
 VB/QB/FB의 이미 요청된 synchronous response는 기존 hold 계약을 따른다.
 특히 VB 공급자는 stall 중 도착한 응답을 GPALU가 소비할 때까지 보존해야 한다.

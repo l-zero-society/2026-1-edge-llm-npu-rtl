@@ -19,7 +19,8 @@ class ComputeUnitTest extends AnyFlatSpec with ChiselScalatestTester {
       dut.io.ub_stream_en, dut.io.wb_stream_en, dut.io.comp_stream_en,
       dut.io.vector_compact_in, dut.io.vector_compact_out,
       dut.io.tpu_en, dut.io.tpu_input_tile_start, dut.io.tpu_clear_w,
-      dut.io.vpu1_en, dut.io.vpu1_fusion_second, dut.io.vpu2_en,
+      dut.io.vpu1_en, dut.io.vpu1_fusion_second, dut.io.direct_row_change_update,
+      dut.io.vpu2_en,
       dut.io.vpu2_norm_phase, dut.io.vpu2_clr_acc, dut.io.vpu2_rope_en,
       dut.io.rope_position_init, dut.io.lut_program_start,
       dut.io.qb_valid, dut.io.fb_valid, dut.io.soft_reset, dut.io.stall).foreach(_.poke(false.B))

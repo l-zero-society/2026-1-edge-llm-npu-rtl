@@ -92,7 +92,9 @@ LUT response에 stall이 겹치는 경우를 검증한다.
 
 Production `VPU_Stage1`과 `ComputeUnit`도 동일한 고정 경로를 사용한다. `ComputeUnit`은
 QB의 512-bit response와 FB의 256-bit response를 별도 포트로 받고 PB에서 quant/RoPE
-parameter를 slice하지 않는다. TPU의 `row_change_update`는 VPU1 latency와 Normalizer의
+parameter를 slice하지 않는다. TPU의 `row_change_update`와 DIRECT의
+`direct_row_change_update`는 선택된 VPU1 data와 같은 7 enabled-edge latency를 지나며,
+VPU1 output에서 `out_valid`와 함께만 assert된다. VPU1 metadata는 Normalizer의
 metadata FIFO를 거쳐 실제 RoPE data beat에 맞춰 전달된다.
 
 Production LUT write는 WB 기반 128-bit stream이다. Act는 16 x UInt8/64개 write 주소,

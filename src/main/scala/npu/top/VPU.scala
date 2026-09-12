@@ -26,6 +26,7 @@ class VPU_Stage1(
     val direct_b = Input(Vec(numLines, SInt(8.W)))
     val direct_a_valid = Input(Bool())
     val direct_b_valid = Input(Bool())
+    val direct_row_change_update = Input(Bool())
 
     // Synchronous VB response for the request issued by vb_read_req.
     val vb_operand = Input(Vec(numLines, SInt(8.W)))
@@ -112,12 +113,16 @@ class VPU_Stage1(
   io.vb_read_req :=
     !direct && io.alu_mode =/= GPALUMode.BYPASS && io.out_lookahead
 
-  // Both fixed paths have seven enabled edges of latency. Carry TPU position
-  // metadata through the same global-stall domain so it remains data-aligned.
+  // Both fixed paths have seven enabled edges of latency. Select the semantic
+  // metadata source with the data path and freeze both in the global-stall
+  // domain so the sideband remains aligned with the matching output beat.
   val metaPipe = RegInit(VecInit(Seq.fill(7)(false.B)))
   when(!io.stall) {
-    metaPipe(0) :=
-      !direct && io.tpu_valid.asUInt.andR && io.tpu_row_change_update
+    metaPipe(0) := Mux(
+      direct,
+      io.direct_a_valid && io.direct_b_valid && io.direct_row_change_update,
+      io.tpu_valid.asUInt.andR && io.tpu_row_change_update
+    )
     for (stage <- 1 until 7) metaPipe(stage) := metaPipe(stage - 1)
   }
   io.out_row_change_update := io.out_valid(0) && metaPipe(6)

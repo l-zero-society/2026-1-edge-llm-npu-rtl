@@ -53,6 +53,8 @@ class ComputeUnit(val numLines: Int = 16) extends Module {
     val vpu1_fusion_second = Input(Bool())
     val vpu1_alu_mode = Input(UInt(2.W))
     val vpu1_out_shift = Input(UInt(5.W))
+    // Central Control metadata for an accepted DIRECT UB/WB/NB beat.
+    val direct_row_change_update = Input(Bool())
     val vpu1_busy = Output(Bool())
     val vb_req = Output(Bool())
 
@@ -201,6 +203,7 @@ class ComputeUnit(val numLines: Int = 16) extends Module {
   vpu1.io.direct_b := VecInit(wbData.map(_.asSInt))
   vpu1.io.direct_a_valid := ubStreamValid && io.vpu1_en
   vpu1.io.direct_b_valid := wbStreamValid && io.vpu1_en
+  vpu1.io.direct_row_change_update := io.direct_row_change_update
   vpu1.io.vb_operand := VecInit(io.vb_in.map(_.asSInt))
   vpu1.io.vb_operand_valid := io.vb_valid
   vpu1.io.input_mode := effectiveInputMode
@@ -244,9 +247,13 @@ class ComputeUnit(val numLines: Int = 16) extends Module {
     1.U -> ubStreamValid,
     2.U -> vpu1ToVpu2Valid
   ))
-  val vpu2RowChange =
-    io.vpu2_input_sel === 2.U && vpu1ToVpu2Valid &&
-      vpu1.io.out_row_change_update
+  val vpu2InputFire =
+    vpu2InputValid && io.vpu2_en && computeInputAllowed && !io.stall
+  val vpu2RowChange = MuxLookup(io.vpu2_input_sel, false.B)(Seq(
+    0.U -> (vpu2InputFire && io.direct_row_change_update),
+    1.U -> (vpu2InputFire && io.direct_row_change_update),
+    2.U -> (vpu2InputFire && vpu1.io.out_row_change_update)
+  ))
 
   vpu2.io.in_vec := vpu2Input
   for (lane <- 0 until numLines)

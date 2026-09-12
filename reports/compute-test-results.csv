@@ -1,0 +1,41 @@
+suite,test,status,duration_s,timestamp
+npu.core.ZeroPadderTest,ZeroPadder should bypass and expand consecutive M1 vectors on accepted physical beats only,PASS,2.666,2026-09-12T16:27:17
+npu.core.CompactorTest,Compactor should retain only row0 online across tiles bubbles and stalls with a pure bypass,PASS,2.185,2026-09-12T16:27:52
+npu.core.LutProgrammingControllerTest,LutProgrammingController should program selected tables in fixed order with latched selection commit delay and little endian words,PASS,45.141,2026-09-12T16:28:35
+npu.top.ComputeUnitTest,ComputeUnit production routing should route compute compact and transposed streams under common stall and program LUTs exclusively from WB,PASS,36.974,2026-09-12T16:30:25
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should compute multi-M multi-K multi-N GEMM and preserve TPU row metadata,PASS,36.325,2026-09-12T16:31:45
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should compute compact-input GEMV with tiled K/N and compact or physical output,PASS,24.8,2026-09-12T16:31:45
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should align VPU1 DIRECT data and row metadata over VB COMPUTE and VPU2 routes,PASS,23.639,2026-09-12T16:31:45
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should normalize VPU1 DIRECT streams through distributed NB phase1 and phase2,PASS,23.658,2026-09-12T16:31:45
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should normalize direct UB and NB streams with distributed metadata preservation,PASS,23.257,2026-09-12T16:31:45
+npu.top.VPUStageTest,Production VPU stages should implement TPU QuantAct-to-GPALU and direct GPALU-to-activation paths,PASS,28.377,2026-09-12T16:34:53
+npu.top.VPUStageTest,Production VPU stages should enable RoPE only for ONLINE layout and bypass it for DISTRIBUTED layout,PASS,17.724,2026-09-12T16:34:53
+npu.top.TPUTopTest,TPU_top should stream K=1 continuously and assert row_change only at each new M-group,PASS,24.853,2026-09-12T16:36:26
+npu.top.TPUTopTest,TPU_top should preserve N-tile and M-group metadata under multi-K accumulation,PASS,15.293,2026-09-12T16:36:26
+npu.top.TPUTopTest,TPU_top should hold row-change and tile progress correctly across global stalls,PASS,15.329,2026-09-12T16:36:26
+npu.top.TPUTopTest,TPU_top should assert row_change on every tile when outColNum is one,PASS,13.252,2026-09-12T16:36:26
+npu.core.GPALUUnitTest,"GPALUUnit should align signed arithmetic, saturation and route valids through bubbles and global stalls",PASS,13.292,2026-09-12T16:38:29
+npu.core.QuantActUnitTest,QuantActUnit should broadcast one PER_MATRIX parameter and support activation LUT / linear bypass,PASS,11.376,2026-09-12T16:39:48
+npu.core.QuantActUnitTest,"QuantActUnit should prefetch 64B PER_CHANNEL lines, swap shadow to active every 16 accepted rows, and tolerate stalls",PASS,6.871,2026-09-12T16:39:48
+npu.core.QuantActUnitTest,QuantActUnit should flag a partial-lane valid beat,PASS,5.922,2026-09-12T16:39:48
+npu.core.QuantActUnitTest,QuantActUnit should select all fusion mask bits and preserve signed requant extrema with four-cycle latency,PASS,5.621,2026-09-12T16:39:48
+npu.core.QuantActUnitTest,"QuantActUnit should force direct activation, ignore every qparam, and retain LUT responses across stalls",PASS,5.718,2026-09-12T16:39:48
+npu.core.QuantActUnitTest,QuantActUnit should instantiate exactly one shared activation LUT for each of the sixteen lanes,PASS,1.97,2026-09-12T16:39:48
+npu.core.VPU1RouteTest,"VPU1 fixed routes should sustain both seven-cycle paths, align lookahead VB reads, and switch routes only after drain",PASS,17.919,2026-09-12T16:38:29
+npu.core.VPU1RouteTest,VPU1 fixed routes should flag and reject mode or destination changes until the current pipeline drains,PASS,7.623,2026-09-12T16:38:29
+npu.core.RopeUnitTest,RopeUnit should bypass data and valid when disabled without requesting FB,PASS,10.32,2026-09-12T16:41:09
+npu.core.RopeUnitTest,RopeUnit should fetch one 32B block for every two accepted beats and preserve position and data through stalls,PASS,6.29,2026-09-12T16:41:09
+npu.core.RopeUnitTest,"RopeUnit should hold half state across bubbles, suppress duplicate requests, and flag a missing next block",PASS,5.712,2026-09-12T16:41:09
+npu.core.RopeUnitTest,RopeUnit should raise DFD when traffic starts before position and frequency preload,PASS,5.334,2026-09-12T16:41:09
+npu.core.NormUnitOnlineTest,UniversalNormUnit ONLINE mode should run RMSNorm online with exact phase transition and row-interleaved Phase1/Phase2,PASS,21.048,2026-09-12T16:42:32
+npu.core.NormUnitOnlineTest,UniversalNormUnit ONLINE mode should run LayerNorm online with exact phase transition and row-interleaved Phase1/Phase2,PASS,15.129,2026-09-12T16:42:32
+npu.core.NormUnitOnlineTest,UniversalNormUnit ONLINE mode should run Milakov online Softmax while interleaving next-row Phase1 with prior-row Phase2,PASS,13.082,2026-09-12T16:42:32
+npu.core.NormUnitDistributedTest,UniversalNormUnit DISTRIBUTED mode should run aligned distributed RMSNorm with 16-lane integration and P1/P2 interleaving,PASS,23.293,2026-09-12T16:44:00
+npu.core.NormUnitDistributedTest,UniversalNormUnit DISTRIBUTED mode should run padded distributed LayerNorm using N=30 statistics while still processing all 32 Phase2 elements,PASS,14.298,2026-09-12T16:44:00
+npu.core.NormUnitDistributedTest,UniversalNormUnit DISTRIBUTED mode should run padded distributed Milakov Softmax with global max correction and P1/P2 interleaving,PASS,13.734,2026-09-12T16:44:00
+npu.core.NormUnitDistributedTest,"UniversalNormUnit DISTRIBUTED mode should preserve distributed LayerNorm state, metadata ordering, and NB transition across targeted and random stalls",PASS,12.713,2026-09-12T16:44:00
+npu.core.NormUnitDistributedTest,UniversalNormUnit DISTRIBUTED mode should preserve distributed Softmax correction and Phase2 state across targeted and random stalls,PASS,12.842,2026-09-12T16:44:00
+npu.core.memory.LineParamOcmTest,ParamPingPongSRAM should provide QB 64B reads with one-cycle latency and wrap a cache across both 4KB banks,PASS,3.539,2026-09-12T16:45:56
+npu.core.memory.LineParamOcmTest,ParamPingPongSRAM should switch QB spill banks at 64 read units and refill the freed bank,PASS,1.128,2026-09-12T16:45:56
+npu.core.memory.LineParamOcmTest,ParamPingPongSRAM should split each FB DMA word into ordered lower and upper 32B cache reads and skip odd padding,PASS,0.623,2026-09-12T16:45:56
+npu.core.memory.LineParamOcmTest,ParamPingPongSRAM should switch FB spill banks at 128 read units and never expose a padded odd tail,PASS,1.015,2026-09-12T16:45:56
