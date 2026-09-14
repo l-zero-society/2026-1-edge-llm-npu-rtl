@@ -202,7 +202,8 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
     nTiles: Int,
     compactInput: Boolean,
     compactOutput: Boolean,
-    transposeOperands: Boolean
+    transposeOperands: Boolean,
+    fusion: Boolean
   ): Unit = {
     clearStreamInputs(dut)
     dut.io.ub_transpose_en.poke(transposeOperands.B)
@@ -219,7 +220,8 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
     dut.io.vpu1_param_mode.poke(QuantParamMode.PER_MATRIX)
     dut.io.matrix_quant_param.poke((BigInt(1) << 16).U)
     dut.io.vpu1_act_mask.poke(0.U)
-    dut.io.vpu1_alu_mode.poke(GPALUMode.BYPASS)
+    dut.io.vpu1_fusion_second.poke(fusion.B)
+    dut.io.vpu1_alu_mode.poke(if (fusion) GPALUMode.ADD else GPALUMode.BYPASS)
     dut.io.vpu1_out_shift.poke(0.U)
     dut.io.vpu2_en.poke(false.B)
   }
@@ -232,7 +234,8 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
     compactInput: Boolean,
     compactOutput: Boolean,
     transposeOperands: Boolean,
-    seed: Long
+    seed: Long,
+    fusionOperands: Option[Vector[Vector[Int]]] = None
   ): Unit = {
     val mGroups = aTiles.length
     val kTiles = aTiles.head.length
@@ -253,8 +256,26 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
       nt <- 0 until nTiles
       row <- 0 until Lanes
     } yield (mg, nt, row, golden(mg)(nt)(row))).toVector
+    fusionOperands.foreach { operands =>
+      require(operands.length == expectedRows.length,
+        s"$label requires one VB operand per TPU output row")
+      require(operands.forall(_.length == Lanes),
+        s"$label requires $Lanes lanes in every VB operand")
+    }
+    val expectedVpuRows = expectedRows.zipWithIndex.map {
+      case ((mg, nt, row, data), index) =>
+        val quantized = data.map(_.max(-128).min(127))
+        val fused = fusionOperands match {
+          case Some(operands) => quantized.zip(operands(index)).map {
+            case (a, b) => (a + b).max(-128).min(127)
+          }
+          case None => quantized
+        }
+        (mg, nt, row, fused)
+    }
 
-    configureTpu(dut, kTiles, nTiles, compactInput, compactOutput, transposeOperands)
+    configureTpu(dut, kTiles, nTiles, compactInput, compactOutput,
+      transposeOperands, fusionOperands.nonEmpty)
     val rng = new Random(seed)
     var physicalCycle = 0
     var tpuSeen = 0
@@ -262,6 +283,8 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
     var outputSeen = 0
     var tpuRowChanges = 0
     var vpuRowChanges = 0
+    var vbRequestCount = 0
+    var activeVbResponse = Option.empty[Vector[Int]]
 
     def monitor(stall: Boolean): Unit = {
       val context = s"$label physical=$physicalCycle tpuAccepted=$tpuSeen vpuAccepted=$vpuSeen"
@@ -296,8 +319,8 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
           s"$context TPU metadata without valid")
 
         if (vpuValid) {
-          assert(vpuSeen < expectedRows.length, s"$context unexpected VPU1 row")
-          val (mg, nt, row, data) = expectedRows(vpuSeen)
+          assert(vpuSeen < expectedVpuRows.length, s"$context unexpected VPU1 row")
+          val (mg, nt, row, data) = expectedVpuRows(vpuSeen)
           expectBytes(dut.observedVpu1Out, data,
             s"$label VPU1 physical=$physicalCycle accepted=$vpuSeen mGroup=$mg nTile=$nt row=$row")
           val expectedMeta = row == 0 && nt == 0
@@ -327,8 +350,31 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
 
     def edge(stall: Boolean): Unit = {
       dut.io.stall.poke(stall.B)
+      activeVbResponse match {
+        case Some(response) =>
+          drive(dut.io.vb_in, response)
+          dut.io.vb_valid.poke(true.B)
+        case None =>
+          drive(dut.io.vb_in, Vector.fill(Lanes)(0))
+          dut.io.vb_valid.poke(false.B)
+      }
       monitor(stall)
+      val request = dut.io.vb_req.peek().litToBoolean
+      if (fusionOperands.nonEmpty) {
+        assert(!request || !stall,
+          s"$label VB request asserted during stall at physical=$physicalCycle")
+        assert(!request || vbRequestCount < fusionOperands.get.length,
+          s"$label unexpected VB request at physical=$physicalCycle request=$vbRequestCount")
+      } else {
+        assert(!request, s"$label unexpected VB request at physical=$physicalCycle")
+      }
+      val requestedResponse =
+        if (request) Some(fusionOperands.get(vbRequestCount)) else None
+      if (request) vbRequestCount += 1
+      val responseConsumed = activeVbResponse.nonEmpty && !stall
       dut.clock.step()
+      if (responseConsumed) activeVbResponse = None
+      requestedResponse.foreach(response => activeVbResponse = Some(response))
       physicalCycle += 1
     }
 
@@ -449,6 +495,10 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
       s"$label TPU row-change count expected=$mGroups actual=$tpuRowChanges")
     assert(vpuRowChanges == mGroups,
       s"$label VPU1 row-change count expected=$mGroups actual=$vpuRowChanges")
+    assert(vbRequestCount == fusionOperands.fold(0)(_.length),
+      s"$label VB request count expected=${fusionOperands.fold(0)(_.length)} actual=$vbRequestCount")
+    assert(activeVbResponse.isEmpty, s"$label VB response remained pending after drain")
+    dut.io.vb_valid.poke(false.B)
     dut.io.stall.poke(false.B)
     dut.clock.step(3)
     assert(!dut.io.compactor_busy.peek().litToBoolean, s"$label Compactor did not drain")
@@ -730,6 +780,27 @@ class ComputeUnitE2ETest extends AnyFlatSpec with ChiselScalatestTester {
       runTpuOperation(dut, "GEMM-transposed-16x16x16", tx, tw,
         compactInput = false, compactOutput = false,
         transposeOperands = true, seed = 0x41a3L)
+    }
+  }
+
+  it should "fuse TPU GEMM results with one-cycle VB responses under stalls" in {
+    test(new ComputeUnitE2EHarness()).withAnnotations(Seq(VerilatorBackendAnnotation)) { dut =>
+      initComputeUnit(dut)
+      val a = Vector.tabulate(1, 1, Lanes, Lanes) { (_, _, row, k) =>
+        ((row * 19 + k * 11 + 7) % 81) - 40
+      }
+      val w = Vector.tabulate(1, 1, Lanes, Lanes) { (_, _, col, k) =>
+        if (k == col) {
+          if ((col & 1) == 0) 2 else -2
+        } else 0
+      }
+      val vb = Vector.tabulate(Lanes, Lanes) { (row, lane) =>
+        ((row * 7 + lane * 13 + 3) % 31) - 15
+      }
+      runTpuOperation(dut, "GEMM-QuantAct-GPALU-ADD-VB", a, w,
+        compactInput = false, compactOutput = false,
+        transposeOperands = false, seed = 0x96f1L,
+        fusionOperands = Some(vb))
     }
   }
 

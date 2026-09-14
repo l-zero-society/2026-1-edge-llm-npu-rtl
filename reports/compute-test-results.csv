@@ -3,11 +3,12 @@ npu.core.ZeroPadderTest,ZeroPadder should bypass and expand consecutive M1 vecto
 npu.core.CompactorTest,Compactor should retain only row0 online across tiles bubbles and stalls with a pure bypass,PASS,2.185,2026-09-12T16:27:52
 npu.core.LutProgrammingControllerTest,LutProgrammingController should program selected tables in fixed order with latched selection commit delay and little endian words,PASS,45.141,2026-09-12T16:28:35
 npu.top.ComputeUnitTest,ComputeUnit production routing should route compute compact and transposed streams under common stall and program LUTs exclusively from WB,PASS,36.974,2026-09-12T16:30:25
-npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should compute multi-M multi-K multi-N GEMM and preserve TPU row metadata,PASS,36.325,2026-09-12T16:31:45
-npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should compute compact-input GEMV with tiled K/N and compact or physical output,PASS,24.8,2026-09-12T16:31:45
-npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should align VPU1 DIRECT data and row metadata over VB COMPUTE and VPU2 routes,PASS,23.639,2026-09-12T16:31:45
-npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should normalize VPU1 DIRECT streams through distributed NB phase1 and phase2,PASS,23.658,2026-09-12T16:31:45
-npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should normalize direct UB and NB streams with distributed metadata preservation,PASS,23.257,2026-09-12T16:31:45
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should compute multi-M multi-K multi-N GEMM and preserve TPU row metadata,PASS,37.54,2026-09-14T04:06:46
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should fuse TPU GEMM results with one-cycle VB responses under stalls,PASS,25.265,2026-09-14T04:06:46
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should compute compact-input GEMV with tiled K/N and compact or physical output,PASS,24.258,2026-09-14T04:06:46
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should align VPU1 DIRECT data and row metadata over VB COMPUTE and VPU2 routes,PASS,22.598,2026-09-14T04:06:46
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should normalize VPU1 DIRECT streams through distributed NB phase1 and phase2,PASS,20.524,2026-09-14T04:06:46
+npu.top.ComputeUnitE2ETest,ComputeUnit end-to-end datapath should normalize direct UB and NB streams with distributed metadata preservation,PASS,21.629,2026-09-14T04:06:46
 npu.top.VPUStageTest,Production VPU stages should implement TPU QuantAct-to-GPALU and direct GPALU-to-activation paths,PASS,28.377,2026-09-12T16:34:53
 npu.top.VPUStageTest,Production VPU stages should enable RoPE only for ONLINE layout and bypass it for DISTRIBUTED layout,PASS,17.724,2026-09-12T16:34:53
 npu.top.TPUTopTest,TPU_top should stream K=1 continuously and assert row_change only at each new M-group,PASS,24.853,2026-09-12T16:36:26

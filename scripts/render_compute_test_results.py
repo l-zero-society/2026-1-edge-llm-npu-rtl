@@ -57,7 +57,9 @@ def write_csv(rows: list[dict[str, object]]) -> Path:
     path = OUTPUT_DIR / "compute-test-results.csv"
     with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(
-            stream, fieldnames=["suite", "test", "status", "duration_s", "timestamp"]
+            stream,
+            fieldnames=["suite", "test", "status", "duration_s", "timestamp"],
+            lineterminator="\n",
         )
         writer.writeheader()
         writer.writerows(rows)

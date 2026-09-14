@@ -23,6 +23,7 @@
 | --- | --- | --- | ---: |
 | Multi-tile GEMM | M=32, K=32, N=32; 2 M-groups × 2 K-tiles × 2 N-tiles | Scala `Y[m,n] = sum(X[m,k] * W[n,k])`; sparse signed W | `0x41a2` |
 | Transposed GEMM | M=16, K=16, N=16; TR1+TR2 enabled | Same independent GEMM golden | `0x41a3` |
+| TPU fusion ADD | M=16, K=16, N=16; TPU → QuantAct → GPALU → COMPUTE | Requantized INT8 GEMM row + one-cycle VB response; 16 VB requests, randomized stalls | `0x96f1` |
 | GEMV compact | M=1, K=32, N=32; ZP input; compact and physical output variants | Independent dot product for both N tiles | `0x52b1`, `0x52b2` |
 | VPU1 DIRECT | 96 accepted beats over VB/COMPUTE/VPU2 routes | Signed `A+B` followed by identity activation LUT | `0x63c4` |
 | VPU1 → VPU2 | DISTRIBUTED RMSNorm N=30, LayerNorm N=48 | Independent Scala fixed-point statistics/LUT model | `0x74d1`, `0x74d2` |
@@ -46,8 +47,10 @@ Executed in the required order on 2026-09-12:
 | `make vpu1-tests` | PASS, 9/9 |
 | `make norm-distributed-test` | PASS, 5/5 |
 | `make compute-unit-test` | PASS, 1/1 |
-| `make compute-e2e-test` | PASS, 5/5 |
-| `make compute-regression` | PASS, 40 unique tests; 46 executions including repeated QuantAct |
+| `make compute-fusion-test` | PASS, 1/1 |
+| `make compute-e2e-test` | PASS, 6/6 |
+| `make compute-regression` | PASS baseline, 40 unique tests; 46 executions including repeated QuantAct |
+| `make compute-e2e-report` | PASS after fusion addition, 41/41 current test results |
 | `git diff --check` | PASS |
 
 `make compute-e2e-test` and `make compute-regression` generate:

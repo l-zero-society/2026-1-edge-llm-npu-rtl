@@ -1,21 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1182" viewBox="0 0 1280 1182">
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1207" viewBox="0 0 1280 1207">
 <rect width="100%" height="100%" fill="#10151d"/>
 <style>text{font-family:Inter,system-ui,sans-serif;fill:#edf2f7}.muted{fill:#9eabb9}.pass{fill:#35c878}.fail{fill:#ef6461}.grid{stroke:#314052;stroke-width:1}.bar{opacity:.9}</style>
 <text x="32" y="40" font-size="24" font-weight="600">ComputeUnit regression results</text>
-<text x="32" y="70" font-size="14" class="muted">40/40 passed · 0 failed · latest 2026-09-12T16:45:56</text>
+<text x="32" y="70" font-size="14" class="muted">41/41 passed · 0 failed · latest 2026-09-14T04:06:46</text>
 <text x="520" y="94" font-size="12" class="muted">duration (seconds)</text>
-<line x1="520.0" y1="102" x2="520.0" y2="1116" class="grid"/>
-<text x="520.0" y="1140" text-anchor="middle" font-size="11" class="muted">0.0</text>
-<line x1="644.0" y1="102" x2="644.0" y2="1116" class="grid"/>
-<text x="644.0" y="1140" text-anchor="middle" font-size="11" class="muted">9.0</text>
-<line x1="768.0" y1="102" x2="768.0" y2="1116" class="grid"/>
-<text x="768.0" y="1140" text-anchor="middle" font-size="11" class="muted">18.1</text>
-<line x1="892.0" y1="102" x2="892.0" y2="1116" class="grid"/>
-<text x="892.0" y="1140" text-anchor="middle" font-size="11" class="muted">27.1</text>
-<line x1="1016.0" y1="102" x2="1016.0" y2="1116" class="grid"/>
-<text x="1016.0" y="1140" text-anchor="middle" font-size="11" class="muted">36.1</text>
-<line x1="1140.0" y1="102" x2="1140.0" y2="1116" class="grid"/>
-<text x="1140.0" y="1140" text-anchor="middle" font-size="11" class="muted">45.1</text>
+<line x1="520.0" y1="102" x2="520.0" y2="1141" class="grid"/>
+<text x="520.0" y="1165" text-anchor="middle" font-size="11" class="muted">0.0</text>
+<line x1="644.0" y1="102" x2="644.0" y2="1141" class="grid"/>
+<text x="644.0" y="1165" text-anchor="middle" font-size="11" class="muted">9.0</text>
+<line x1="768.0" y1="102" x2="768.0" y2="1141" class="grid"/>
+<text x="768.0" y="1165" text-anchor="middle" font-size="11" class="muted">18.1</text>
+<line x1="892.0" y1="102" x2="892.0" y2="1141" class="grid"/>
+<text x="892.0" y="1165" text-anchor="middle" font-size="11" class="muted">27.1</text>
+<line x1="1016.0" y1="102" x2="1016.0" y2="1141" class="grid"/>
+<text x="1016.0" y="1165" text-anchor="middle" font-size="11" class="muted">36.1</text>
+<line x1="1140.0" y1="102" x2="1140.0" y2="1141" class="grid"/>
+<text x="1140.0" y="1165" text-anchor="middle" font-size="11" class="muted">45.1</text>
 <text x="32" y="127" font-size="12">ZeroPadderTest · ZeroPadder should bypass and expand consecutive M1 vec…</text>
 <rect x="520" y="116" width="36.6" height="14" rx="2" class="bar pass"/>
 <text x="563.6" y="127" font-size="11" class="pass">2.666s PASS</text>
@@ -29,112 +29,115 @@
 <rect x="520" y="191" width="507.8" height="14" rx="2" class="bar pass"/>
 <text x="1034.8" y="202" font-size="11" class="pass">36.974s PASS</text>
 <text x="32" y="227" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should compute mul…</text>
-<rect x="520" y="216" width="498.9" height="14" rx="2" class="bar pass"/>
-<text x="1025.9" y="227" font-size="11" class="pass">36.325s PASS</text>
-<text x="32" y="252" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should compute com…</text>
-<rect x="520" y="241" width="340.6" height="14" rx="2" class="bar pass"/>
-<text x="867.6" y="252" font-size="11" class="pass">24.800s PASS</text>
-<text x="32" y="277" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should align VPU1 …</text>
-<rect x="520" y="266" width="324.7" height="14" rx="2" class="bar pass"/>
-<text x="851.7" y="277" font-size="11" class="pass">23.639s PASS</text>
-<text x="32" y="302" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should normalize V…</text>
-<rect x="520" y="291" width="324.9" height="14" rx="2" class="bar pass"/>
-<text x="851.9" y="302" font-size="11" class="pass">23.658s PASS</text>
-<text x="32" y="327" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should normalize d…</text>
-<rect x="520" y="316" width="319.4" height="14" rx="2" class="bar pass"/>
-<text x="846.4" y="327" font-size="11" class="pass">23.257s PASS</text>
-<text x="32" y="352" font-size="12">VPUStageTest · Production VPU stages should implement TPU QuantAct-to-G…</text>
-<rect x="520" y="341" width="389.8" height="14" rx="2" class="bar pass"/>
-<text x="916.8" y="352" font-size="11" class="pass">28.377s PASS</text>
-<text x="32" y="377" font-size="12">VPUStageTest · Production VPU stages should enable RoPE only for ONLINE…</text>
-<rect x="520" y="366" width="243.4" height="14" rx="2" class="bar pass"/>
-<text x="770.4" y="377" font-size="11" class="pass">17.724s PASS</text>
-<text x="32" y="402" font-size="12">TPUTopTest · TPU_top should stream K=1 continuously and assert row_chan…</text>
-<rect x="520" y="391" width="341.3" height="14" rx="2" class="bar pass"/>
-<text x="868.3" y="402" font-size="11" class="pass">24.853s PASS</text>
-<text x="32" y="427" font-size="12">TPUTopTest · TPU_top should preserve N-tile and M-group metadata under …</text>
-<rect x="520" y="416" width="210.0" height="14" rx="2" class="bar pass"/>
-<text x="737.0" y="427" font-size="11" class="pass">15.293s PASS</text>
-<text x="32" y="452" font-size="12">TPUTopTest · TPU_top should hold row-change and tile progress correctly…</text>
-<rect x="520" y="441" width="210.5" height="14" rx="2" class="bar pass"/>
-<text x="737.5" y="452" font-size="11" class="pass">15.329s PASS</text>
-<text x="32" y="477" font-size="12">TPUTopTest · TPU_top should assert row_change on every tile when outCol…</text>
-<rect x="520" y="466" width="182.0" height="14" rx="2" class="bar pass"/>
-<text x="709.0" y="477" font-size="11" class="pass">13.252s PASS</text>
-<text x="32" y="502" font-size="12">GPALUUnitTest · GPALUUnit should align signed arithmetic, saturation an…</text>
-<rect x="520" y="491" width="182.6" height="14" rx="2" class="bar pass"/>
-<text x="709.6" y="502" font-size="11" class="pass">13.292s PASS</text>
-<text x="32" y="527" font-size="12">QuantActUnitTest · QuantActUnit should broadcast one PER_MATRIX paramet…</text>
-<rect x="520" y="516" width="156.2" height="14" rx="2" class="bar pass"/>
-<text x="683.2" y="527" font-size="11" class="pass">11.376s PASS</text>
-<text x="32" y="552" font-size="12">QuantActUnitTest · QuantActUnit should prefetch 64B PER_CHANNEL lines, …</text>
-<rect x="520" y="541" width="94.4" height="14" rx="2" class="bar pass"/>
-<text x="621.4" y="552" font-size="11" class="pass">6.871s PASS</text>
-<text x="32" y="577" font-size="12">QuantActUnitTest · QuantActUnit should flag a partial-lane valid beat</text>
-<rect x="520" y="566" width="81.3" height="14" rx="2" class="bar pass"/>
-<text x="608.3" y="577" font-size="11" class="pass">5.922s PASS</text>
-<text x="32" y="602" font-size="12">QuantActUnitTest · QuantActUnit should select all fusion mask bits and …</text>
-<rect x="520" y="591" width="77.2" height="14" rx="2" class="bar pass"/>
-<text x="604.2" y="602" font-size="11" class="pass">5.621s PASS</text>
-<text x="32" y="627" font-size="12">QuantActUnitTest · QuantActUnit should force direct activation, ignore …</text>
-<rect x="520" y="616" width="78.5" height="14" rx="2" class="bar pass"/>
-<text x="605.5" y="627" font-size="11" class="pass">5.718s PASS</text>
-<text x="32" y="652" font-size="12">QuantActUnitTest · QuantActUnit should instantiate exactly one shared a…</text>
-<rect x="520" y="641" width="27.1" height="14" rx="2" class="bar pass"/>
-<text x="554.1" y="652" font-size="11" class="pass">1.970s PASS</text>
-<text x="32" y="677" font-size="12">VPU1RouteTest · VPU1 fixed routes should sustain both seven-cycle paths…</text>
-<rect x="520" y="666" width="246.1" height="14" rx="2" class="bar pass"/>
-<text x="773.1" y="677" font-size="11" class="pass">17.919s PASS</text>
-<text x="32" y="702" font-size="12">VPU1RouteTest · VPU1 fixed routes should flag and reject mode or destin…</text>
-<rect x="520" y="691" width="104.7" height="14" rx="2" class="bar pass"/>
-<text x="631.7" y="702" font-size="11" class="pass">7.623s PASS</text>
-<text x="32" y="727" font-size="12">RopeUnitTest · RopeUnit should bypass data and valid when disabled with…</text>
-<rect x="520" y="716" width="141.7" height="14" rx="2" class="bar pass"/>
-<text x="668.7" y="727" font-size="11" class="pass">10.320s PASS</text>
-<text x="32" y="752" font-size="12">RopeUnitTest · RopeUnit should fetch one 32B block for every two accept…</text>
-<rect x="520" y="741" width="86.4" height="14" rx="2" class="bar pass"/>
-<text x="613.4" y="752" font-size="11" class="pass">6.290s PASS</text>
-<text x="32" y="777" font-size="12">RopeUnitTest · RopeUnit should hold half state across bubbles, suppress…</text>
-<rect x="520" y="766" width="78.5" height="14" rx="2" class="bar pass"/>
-<text x="605.5" y="777" font-size="11" class="pass">5.712s PASS</text>
-<text x="32" y="802" font-size="12">RopeUnitTest · RopeUnit should raise DFD when traffic starts before pos…</text>
-<rect x="520" y="791" width="73.3" height="14" rx="2" class="bar pass"/>
-<text x="600.3" y="802" font-size="11" class="pass">5.334s PASS</text>
-<text x="32" y="827" font-size="12">NormUnitOnlineTest · UniversalNormUnit ONLINE mode should run RMSNorm o…</text>
-<rect x="520" y="816" width="289.1" height="14" rx="2" class="bar pass"/>
-<text x="816.1" y="827" font-size="11" class="pass">21.048s PASS</text>
-<text x="32" y="852" font-size="12">NormUnitOnlineTest · UniversalNormUnit ONLINE mode should run LayerNorm…</text>
-<rect x="520" y="841" width="207.8" height="14" rx="2" class="bar pass"/>
-<text x="734.8" y="852" font-size="11" class="pass">15.129s PASS</text>
-<text x="32" y="877" font-size="12">NormUnitOnlineTest · UniversalNormUnit ONLINE mode should run Milakov o…</text>
-<rect x="520" y="866" width="179.7" height="14" rx="2" class="bar pass"/>
-<text x="706.7" y="877" font-size="11" class="pass">13.082s PASS</text>
-<text x="32" y="902" font-size="12">NormUnitDistributedTest · UniversalNormUnit DISTRIBUTED mode should run…</text>
-<rect x="520" y="891" width="319.9" height="14" rx="2" class="bar pass"/>
-<text x="846.9" y="902" font-size="11" class="pass">23.293s PASS</text>
+<rect x="520" y="216" width="515.6" height="14" rx="2" class="bar pass"/>
+<text x="1042.6" y="227" font-size="11" class="pass">37.540s PASS</text>
+<text x="32" y="252" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should fuse TPU GE…</text>
+<rect x="520" y="241" width="347.0" height="14" rx="2" class="bar pass"/>
+<text x="874.0" y="252" font-size="11" class="pass">25.265s PASS</text>
+<text x="32" y="277" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should compute com…</text>
+<rect x="520" y="266" width="333.2" height="14" rx="2" class="bar pass"/>
+<text x="860.2" y="277" font-size="11" class="pass">24.258s PASS</text>
+<text x="32" y="302" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should align VPU1 …</text>
+<rect x="520" y="291" width="310.4" height="14" rx="2" class="bar pass"/>
+<text x="837.4" y="302" font-size="11" class="pass">22.598s PASS</text>
+<text x="32" y="327" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should normalize V…</text>
+<rect x="520" y="316" width="281.9" height="14" rx="2" class="bar pass"/>
+<text x="808.9" y="327" font-size="11" class="pass">20.524s PASS</text>
+<text x="32" y="352" font-size="12">ComputeUnitE2ETest · ComputeUnit end-to-end datapath should normalize d…</text>
+<rect x="520" y="341" width="297.1" height="14" rx="2" class="bar pass"/>
+<text x="824.1" y="352" font-size="11" class="pass">21.629s PASS</text>
+<text x="32" y="377" font-size="12">VPUStageTest · Production VPU stages should implement TPU QuantAct-to-G…</text>
+<rect x="520" y="366" width="389.8" height="14" rx="2" class="bar pass"/>
+<text x="916.8" y="377" font-size="11" class="pass">28.377s PASS</text>
+<text x="32" y="402" font-size="12">VPUStageTest · Production VPU stages should enable RoPE only for ONLINE…</text>
+<rect x="520" y="391" width="243.4" height="14" rx="2" class="bar pass"/>
+<text x="770.4" y="402" font-size="11" class="pass">17.724s PASS</text>
+<text x="32" y="427" font-size="12">TPUTopTest · TPU_top should stream K=1 continuously and assert row_chan…</text>
+<rect x="520" y="416" width="341.3" height="14" rx="2" class="bar pass"/>
+<text x="868.3" y="427" font-size="11" class="pass">24.853s PASS</text>
+<text x="32" y="452" font-size="12">TPUTopTest · TPU_top should preserve N-tile and M-group metadata under …</text>
+<rect x="520" y="441" width="210.0" height="14" rx="2" class="bar pass"/>
+<text x="737.0" y="452" font-size="11" class="pass">15.293s PASS</text>
+<text x="32" y="477" font-size="12">TPUTopTest · TPU_top should hold row-change and tile progress correctly…</text>
+<rect x="520" y="466" width="210.5" height="14" rx="2" class="bar pass"/>
+<text x="737.5" y="477" font-size="11" class="pass">15.329s PASS</text>
+<text x="32" y="502" font-size="12">TPUTopTest · TPU_top should assert row_change on every tile when outCol…</text>
+<rect x="520" y="491" width="182.0" height="14" rx="2" class="bar pass"/>
+<text x="709.0" y="502" font-size="11" class="pass">13.252s PASS</text>
+<text x="32" y="527" font-size="12">GPALUUnitTest · GPALUUnit should align signed arithmetic, saturation an…</text>
+<rect x="520" y="516" width="182.6" height="14" rx="2" class="bar pass"/>
+<text x="709.6" y="527" font-size="11" class="pass">13.292s PASS</text>
+<text x="32" y="552" font-size="12">QuantActUnitTest · QuantActUnit should broadcast one PER_MATRIX paramet…</text>
+<rect x="520" y="541" width="156.2" height="14" rx="2" class="bar pass"/>
+<text x="683.2" y="552" font-size="11" class="pass">11.376s PASS</text>
+<text x="32" y="577" font-size="12">QuantActUnitTest · QuantActUnit should prefetch 64B PER_CHANNEL lines, …</text>
+<rect x="520" y="566" width="94.4" height="14" rx="2" class="bar pass"/>
+<text x="621.4" y="577" font-size="11" class="pass">6.871s PASS</text>
+<text x="32" y="602" font-size="12">QuantActUnitTest · QuantActUnit should flag a partial-lane valid beat</text>
+<rect x="520" y="591" width="81.3" height="14" rx="2" class="bar pass"/>
+<text x="608.3" y="602" font-size="11" class="pass">5.922s PASS</text>
+<text x="32" y="627" font-size="12">QuantActUnitTest · QuantActUnit should select all fusion mask bits and …</text>
+<rect x="520" y="616" width="77.2" height="14" rx="2" class="bar pass"/>
+<text x="604.2" y="627" font-size="11" class="pass">5.621s PASS</text>
+<text x="32" y="652" font-size="12">QuantActUnitTest · QuantActUnit should force direct activation, ignore …</text>
+<rect x="520" y="641" width="78.5" height="14" rx="2" class="bar pass"/>
+<text x="605.5" y="652" font-size="11" class="pass">5.718s PASS</text>
+<text x="32" y="677" font-size="12">QuantActUnitTest · QuantActUnit should instantiate exactly one shared a…</text>
+<rect x="520" y="666" width="27.1" height="14" rx="2" class="bar pass"/>
+<text x="554.1" y="677" font-size="11" class="pass">1.970s PASS</text>
+<text x="32" y="702" font-size="12">VPU1RouteTest · VPU1 fixed routes should sustain both seven-cycle paths…</text>
+<rect x="520" y="691" width="246.1" height="14" rx="2" class="bar pass"/>
+<text x="773.1" y="702" font-size="11" class="pass">17.919s PASS</text>
+<text x="32" y="727" font-size="12">VPU1RouteTest · VPU1 fixed routes should flag and reject mode or destin…</text>
+<rect x="520" y="716" width="104.7" height="14" rx="2" class="bar pass"/>
+<text x="631.7" y="727" font-size="11" class="pass">7.623s PASS</text>
+<text x="32" y="752" font-size="12">RopeUnitTest · RopeUnit should bypass data and valid when disabled with…</text>
+<rect x="520" y="741" width="141.7" height="14" rx="2" class="bar pass"/>
+<text x="668.7" y="752" font-size="11" class="pass">10.320s PASS</text>
+<text x="32" y="777" font-size="12">RopeUnitTest · RopeUnit should fetch one 32B block for every two accept…</text>
+<rect x="520" y="766" width="86.4" height="14" rx="2" class="bar pass"/>
+<text x="613.4" y="777" font-size="11" class="pass">6.290s PASS</text>
+<text x="32" y="802" font-size="12">RopeUnitTest · RopeUnit should hold half state across bubbles, suppress…</text>
+<rect x="520" y="791" width="78.5" height="14" rx="2" class="bar pass"/>
+<text x="605.5" y="802" font-size="11" class="pass">5.712s PASS</text>
+<text x="32" y="827" font-size="12">RopeUnitTest · RopeUnit should raise DFD when traffic starts before pos…</text>
+<rect x="520" y="816" width="73.3" height="14" rx="2" class="bar pass"/>
+<text x="600.3" y="827" font-size="11" class="pass">5.334s PASS</text>
+<text x="32" y="852" font-size="12">NormUnitOnlineTest · UniversalNormUnit ONLINE mode should run RMSNorm o…</text>
+<rect x="520" y="841" width="289.1" height="14" rx="2" class="bar pass"/>
+<text x="816.1" y="852" font-size="11" class="pass">21.048s PASS</text>
+<text x="32" y="877" font-size="12">NormUnitOnlineTest · UniversalNormUnit ONLINE mode should run LayerNorm…</text>
+<rect x="520" y="866" width="207.8" height="14" rx="2" class="bar pass"/>
+<text x="734.8" y="877" font-size="11" class="pass">15.129s PASS</text>
+<text x="32" y="902" font-size="12">NormUnitOnlineTest · UniversalNormUnit ONLINE mode should run Milakov o…</text>
+<rect x="520" y="891" width="179.7" height="14" rx="2" class="bar pass"/>
+<text x="706.7" y="902" font-size="11" class="pass">13.082s PASS</text>
 <text x="32" y="927" font-size="12">NormUnitDistributedTest · UniversalNormUnit DISTRIBUTED mode should run…</text>
-<rect x="520" y="916" width="196.4" height="14" rx="2" class="bar pass"/>
-<text x="723.4" y="927" font-size="11" class="pass">14.298s PASS</text>
+<rect x="520" y="916" width="319.9" height="14" rx="2" class="bar pass"/>
+<text x="846.9" y="927" font-size="11" class="pass">23.293s PASS</text>
 <text x="32" y="952" font-size="12">NormUnitDistributedTest · UniversalNormUnit DISTRIBUTED mode should run…</text>
-<rect x="520" y="941" width="188.6" height="14" rx="2" class="bar pass"/>
-<text x="715.6" y="952" font-size="11" class="pass">13.734s PASS</text>
-<text x="32" y="977" font-size="12">NormUnitDistributedTest · UniversalNormUnit DISTRIBUTED mode should pre…</text>
-<rect x="520" y="966" width="174.6" height="14" rx="2" class="bar pass"/>
-<text x="701.6" y="977" font-size="11" class="pass">12.713s PASS</text>
+<rect x="520" y="941" width="196.4" height="14" rx="2" class="bar pass"/>
+<text x="723.4" y="952" font-size="11" class="pass">14.298s PASS</text>
+<text x="32" y="977" font-size="12">NormUnitDistributedTest · UniversalNormUnit DISTRIBUTED mode should run…</text>
+<rect x="520" y="966" width="188.6" height="14" rx="2" class="bar pass"/>
+<text x="715.6" y="977" font-size="11" class="pass">13.734s PASS</text>
 <text x="32" y="1002" font-size="12">NormUnitDistributedTest · UniversalNormUnit DISTRIBUTED mode should pre…</text>
-<rect x="520" y="991" width="176.4" height="14" rx="2" class="bar pass"/>
-<text x="703.4" y="1002" font-size="11" class="pass">12.842s PASS</text>
-<text x="32" y="1027" font-size="12">LineParamOcmTest · ParamPingPongSRAM should provide QB 64B reads with o…</text>
-<rect x="520" y="1016" width="48.6" height="14" rx="2" class="bar pass"/>
-<text x="575.6" y="1027" font-size="11" class="pass">3.539s PASS</text>
-<text x="32" y="1052" font-size="12">LineParamOcmTest · ParamPingPongSRAM should switch QB spill banks at 64…</text>
-<rect x="520" y="1041" width="15.5" height="14" rx="2" class="bar pass"/>
-<text x="542.5" y="1052" font-size="11" class="pass">1.128s PASS</text>
-<text x="32" y="1077" font-size="12">LineParamOcmTest · ParamPingPongSRAM should split each FB DMA word into…</text>
-<rect x="520" y="1066" width="8.6" height="14" rx="2" class="bar pass"/>
-<text x="535.6" y="1077" font-size="11" class="pass">0.623s PASS</text>
-<text x="32" y="1102" font-size="12">LineParamOcmTest · ParamPingPongSRAM should switch FB spill banks at 12…</text>
-<rect x="520" y="1091" width="13.9" height="14" rx="2" class="bar pass"/>
-<text x="540.9" y="1102" font-size="11" class="pass">1.015s PASS</text>
-<text x="32" y="1162" font-size="11" class="muted">Source: target/test-reports/TEST-*.xml · generated deterministically by scripts/render_compute_test_results.py</text>
+<rect x="520" y="991" width="174.6" height="14" rx="2" class="bar pass"/>
+<text x="701.6" y="1002" font-size="11" class="pass">12.713s PASS</text>
+<text x="32" y="1027" font-size="12">NormUnitDistributedTest · UniversalNormUnit DISTRIBUTED mode should pre…</text>
+<rect x="520" y="1016" width="176.4" height="14" rx="2" class="bar pass"/>
+<text x="703.4" y="1027" font-size="11" class="pass">12.842s PASS</text>
+<text x="32" y="1052" font-size="12">LineParamOcmTest · ParamPingPongSRAM should provide QB 64B reads with o…</text>
+<rect x="520" y="1041" width="48.6" height="14" rx="2" class="bar pass"/>
+<text x="575.6" y="1052" font-size="11" class="pass">3.539s PASS</text>
+<text x="32" y="1077" font-size="12">LineParamOcmTest · ParamPingPongSRAM should switch QB spill banks at 64…</text>
+<rect x="520" y="1066" width="15.5" height="14" rx="2" class="bar pass"/>
+<text x="542.5" y="1077" font-size="11" class="pass">1.128s PASS</text>
+<text x="32" y="1102" font-size="12">LineParamOcmTest · ParamPingPongSRAM should split each FB DMA word into…</text>
+<rect x="520" y="1091" width="8.6" height="14" rx="2" class="bar pass"/>
+<text x="535.6" y="1102" font-size="11" class="pass">0.623s PASS</text>
+<text x="32" y="1127" font-size="12">LineParamOcmTest · ParamPingPongSRAM should switch FB spill banks at 12…</text>
+<rect x="520" y="1116" width="13.9" height="14" rx="2" class="bar pass"/>
+<text x="540.9" y="1127" font-size="11" class="pass">1.015s PASS</text>
+<text x="32" y="1187" font-size="11" class="muted">Source: target/test-reports/TEST-*.xml · generated deterministically by scripts/render_compute_test_results.py</text>
 </svg>
