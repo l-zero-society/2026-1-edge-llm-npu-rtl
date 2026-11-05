@@ -20,6 +20,10 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     val fill = Decoupled(new IbFillWrite)
     val memory = Vec(targets, Decoupled(new MemoryReadData))
     val done = Vec(targets, Decoupled(new RefillDone))
+    // Live candidates, independent of permits and source reservation occupancy.
+    val nextReadRequest = Output(Vec(targets, Valid(new ReadPlan(p))))
+    val sourceAvailable = Output(Vec(2, Bool())) // DRAM, IB; not backend ready/OCM credit
+    val schedulePermit = Input(Vec(targets, Bool()))
     val acceptedPlan = Output(Vec(2, Valid(new ReadPlan(p)))) // dispatch acceptance / cursor advance
     val drained = Output(Bool())
   })
@@ -33,6 +37,10 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   val pass = RegInit(VecInit(Seq.fill(streams)(0.U(32.W))))
   val tile = RegInit(VecInit(Seq.fill(streams)(0.U(32.W))))
   val within = RegInit(VecInit(Seq.fill(streams)(0.U(13.W))))
+  // Configuration-time multiply only. Continuous runs use byte counters so
+  // merged accepts need neither per-tile iteration nor division on issue.
+  val passBytes = Reg(Vec(streams, UInt(46.W)))
+  val passRemaining = Reg(Vec(streams, UInt(46.W)))
   // Affine loop bases advance by addition; no wide address multipliers on the
   // dispatch path. Repeated passes rewind tileBase to their canonical base.
   val rowBase = Reg(Vec(streams, UInt(64.W)))
@@ -84,6 +92,9 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     row(c.stream) := 0.U; pass(c.stream) := 0.U
     tile(c.stream) := 0.U; within(c.stream) := 0.U
     rowBase(c.stream) := c.base; passBase(c.stream) := c.base; tileBase(c.stream) := c.base
+    val length = (c.tiles - 1.U) * c.tileBytes +& c.tailBytes
+    passBytes(c.stream) := length
+    passRemaining(c.stream) := length
   }
   when(io.mapping.fire) {
     val u = io.mapping.bits
@@ -141,10 +152,13 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     val c = configs(s)
     val address = tileBase(s) + within(s)
     val tileLength = Mux(tile(s) === c.tiles - 1.U, c.tailBytes, c.tileBytes)
-    // Split at tile/repeat/stride, page, region and backend boundaries. Even
-    // contiguous tiles may remain separate; this never changes logical last.
+    val contiguous = c.tileStride === c.tileBytes
+    // Merge within a continuous pass, including its short final tile. Strided
+    // passes retain the tile cursor; both paths count only payload bytes.
+    val runRoom = min(passRemaining(s), 4096.U)(12, 0)
+    val traversalRoom = Mux(contiguous, runRoom, tileLength - within(s))
     val pageRoom = 4096.U(13.W) - address(11, 0)
-    val candidate = min(min(remaining(t), tileLength - within(s)), min(pageRoom, p.maxSegmentBytes.U))
+    val candidate = min(min(remaining(t), traversalRoom), min(pageRoom, p.maxSegmentBytes.U))
     val matches = Wire(Vec(p.regions, Bool()))
     val boundary = Wire(Vec(p.regions, UInt(13.W)))
     for (r <- 0 until p.regions) {
@@ -155,16 +169,24 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
       val distance = m.canonicalBase - address
       boundary(r) := Mux(sameContext && address < m.canonicalBase && distance < candidate, distance, candidate)
     }
-    val bytes = boundary.reduce((a, b) => min(a, b))
+    val boundedBytes = boundary.reduce((a, b) => min(a, b))
     val mapped = matches.asUInt.orR
     val region = PriorityEncoder(matches)
     val mapping = mappings(region)
     val relative = address - mapping.canonicalBase
     val page = pageIndex(relative)
+    val pageCoverage = coverage(region)(page) >> address(11, 4)
+    val candidateMask = Fill(256, 1.U(1.W)) >> (256.U - (boundedBytes >> 4))
+    val holes = ~pageCoverage & candidateMask
+    // A committed prefix is an IB segment; stop before the first uncommitted
+    // lane. If the starting lane is invalid, conservatively miss the candidate.
+    val splitHitPrefix = mapped && pageCoverage(0) && holes.orR
+    val prefixBytes = Cat(PriorityEncoder(holes), 0.U(4.W))
+    val bytes = Mux(splitHitPrefix, prefixBytes, boundedBytes)
     val mask = (Fill(256, 1.U(1.W)) >> (256.U - (bytes >> 4))) << address(11, 4)
     val hit = mapped && (coverage(region)(page) & mask(255, 0)) === mask(255, 0)
-    val tileEnd = within(s) + bytes === tileLength
-    val passEnd = tileEnd && tile(s) === c.tiles - 1.U
+    val tileEnd = !contiguous && within(s) + bytes === tileLength
+    val passEnd = bytes === passRemaining(s)
     val rowEnd = passEnd && pass(s) === c.passes - 1.U
     val streamEnd = rowEnd && row(s) === c.rows - 1.U
     val plan = Wire(new ReadPlan(p))
@@ -184,8 +206,11 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     plan.fillAddress := mapping.ibBase + relative
     plan.region := region
     val eligible = active(t) && !pending(t) && !complete(t)
+    io.nextReadRequest(t).valid := eligible && !(c.ibOnly && !hit)
+    io.nextReadRequest(t).bits := plan
     for (source <- 0 until 2) {
-      arbiters(source).io.in(t).valid := eligible && !(c.ibOnly && !hit) && hit === (source == 1).B
+      arbiters(source).io.in(t).valid := io.nextReadRequest(t).valid &&
+        io.schedulePermit(t) && hit === (source == 1).B
       arbiters(source).io.in(t).bits := plan
     }
     when(eligible && c.ibOnly && !hit) {
@@ -202,10 +227,18 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
       // Canonical issue cursor advances exactly at plan acceptance, never on
       // lookahead, arbiter grant alone, or response stalls.
       within(s) := within(s) + bytes
+      passRemaining(s) := passRemaining(s) - bytes
+      when(contiguous) {
+        tileBase(s) := tileBase(s) + bytes
+        within(s) := 0.U
+      }
       when(tileEnd) {
         within(s) := 0.U; tile(s) := tile(s) + 1.U
         tileBase(s) := tileBase(s) + c.tileStride
-        when(passEnd) {
+      }
+      when(passEnd) {
+          passRemaining(s) := passBytes(s)
+          within(s) := 0.U
           tile(s) := 0.U; pass(s) := pass(s) + 1.U
           passBase(s) := passBase(s) + c.passStride
           tileBase(s) := passBase(s) + c.passStride
@@ -216,7 +249,6 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
             tileBase(s) := rowBase(s) + c.rowStride
             when(streamEnd) { exhausted(s) := true.B }
           }
-        }
       }
     }
   }
@@ -226,6 +258,7 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   for ((port, source) <- Seq(io.dram, io.ib).zipWithIndex) {
     val arb = arbiters(source)
     val plan = sourcePlan(source)
+    io.sourceAvailable(source) := !sourceBusy(source)
     arb.io.out.ready := !sourceBusy(source)
     io.acceptedPlan(source).valid := arb.io.out.fire
     io.acceptedPlan(source).bits := arb.io.out.bits
@@ -287,6 +320,9 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
       assert(response.laneCount > 0.U && response.laneCount <= 4.U)
       assert(response.firstLane +& response.laneCount <= 4.U)
       assert(response.firstLane === (plan.address + response.payloadOffset)(5, 4))
+      val wordRoom = 64.U(7.W) - (plan.address + response.payloadOffset)(5, 0)
+      assert(bytes === min(wordRoom, plan.payloadBytes - response.payloadOffset),
+        "one response must cover the logical intersection of a whole raw word")
       assert(response.payloadOffset +& bytes <= plan.payloadBytes)
       assert(response.segmentLast === (response.payloadOffset +& bytes === plan.payloadBytes))
       when(!ocmSent(source) && sinkReady) { ocmSent(source) := true.B }

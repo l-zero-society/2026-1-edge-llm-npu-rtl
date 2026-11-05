@@ -77,13 +77,19 @@ class ReadPlan(p: DmaReadParams) extends Bundle {
   val fillAddress = UInt(64.W)
   val region = UInt(p.regionBits.W)
 }
-/** Exact range. Transport MUST NOT read outside address .. address+payloadBytes.
-  * A TL adapter must decompose this into legal naturally aligned Get sizes.
+/** address/payloadBytes describe the logical 16B-aligned payload (1..4096B,
+  * with a positive multiple of 16 bytes; zero length is invalid).
+  * DRAM fetches [alignDown(address,64), alignUp(address+payloadBytes,64)). SW
+  * guarantees readable backing for this whole window. A TL adapter decomposes
+  * it into supported naturally aligned power-of-two Gets (default mock: <=4KiB).
+  * IB accesses only the selected word lanes; padding never acquires coverage.
   */
 class ReadBurstRequest(p: DmaReadParams) extends Bundle { val plan = new ReadPlan(p) }
-/** Raw aligned 64B word; only firstLane .. firstLane+laneCount are payload.
+/** One response per aligned 64B word; firstLane/laneCount are its intersection
+  * with the logical payload. payloadOffset counts payload bytes, not padding.
   * Responses are ordered within a segment, including across TL subrequests.
-  * segmentLast refers to the backend segment, never a TL subrequest.
+  * Get boundaries never split a raw word. segmentLast is the final fetched word
+  * of the backend segment, never merely a TL Get last or logical chunk last.
   */
 class ReadBurstResponse extends Bundle {
   val identity = new ReadIdentity

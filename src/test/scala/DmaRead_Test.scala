@@ -20,6 +20,9 @@ class DmaReadHarness(val p: DmaReadParams = DmaReadParams(pagesPerRegion = 2),
     val memory = Vec(ReadTarget.Count, Decoupled(new MemoryReadData))
     val done = Vec(ReadTarget.Count, Decoupled(new RefillDone))
     val acceptedPlan = Output(Vec(2, Valid(new ReadPlan(p))))
+    val nextReadRequest = Output(Vec(ReadTarget.Count, Valid(new ReadPlan(p))))
+    val sourceAvailable = Output(Vec(2, Bool()))
+    val schedulePermit = Input(Vec(ReadTarget.Count, Bool()))
     val drained = Output(Bool())
     val wordRead = Decoupled(new IbWordRead)
     val wordResponse = Flipped(Decoupled(UInt(512.W)))
@@ -30,6 +33,9 @@ class DmaReadHarness(val p: DmaReadParams = DmaReadParams(pagesPerRegion = 2),
   engine.io.refill <> io.refill; io.dram <> engine.io.dram
   io.memory <> engine.io.memory; io.done <> engine.io.done
   io.acceptedPlan := engine.io.acceptedPlan; io.drained := engine.io.drained
+  io.nextReadRequest := engine.io.nextReadRequest
+  io.sourceAvailable := engine.io.sourceAvailable
+  engine.io.schedulePermit := io.schedulePermit
   ib.io.burst <> engine.io.ib
   if (sharedIbPort) {
     val arbiter = Module(new IbReadFillArbiter)
@@ -64,7 +70,8 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
                             rowBoundary: Boolean = false, ibOnly: Boolean = false,
                             mode: Int = ReadSupplyMode.Stream)
 
-  private class Sim(val d: DmaReadHarness, val stalls: Boolean = true) {
+  private class Sim(val d: DmaReadHarness, val stalls: Boolean = true, val maxGetBytes: Int = 4096) {
+    require(maxGetBytes >= 64 && maxGetBytes <= 4096 && (maxGetBytes & (maxGetBytes - 1)) == 0)
     var cycle = 0
     var fillAllow = true
     var ocmAllow = true
@@ -74,6 +81,9 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
     val plans = mutable.ArrayBuffer.empty[Plan]
     val dramRequests = mutable.ArrayBuffer.empty[Plan]
     val gets = mutable.ArrayBuffer.empty[(BigInt, Int)]
+    val fetchWindows = mutable.ArrayBuffer.empty[(Id, BigInt, BigInt)]
+    val rawWords = mutable.ArrayBuffer.empty[(Id, BigInt, Int, Int)]
+    val getEnds = mutable.ArrayBuffer.empty[(Id, BigInt)]
     val deliveries = mutable.ArrayBuffer.empty[Delivery]
     val dones = mutable.ArrayBuffer.empty[Done]
     val writes = mutable.ArrayBuffer.empty[(Id, BigInt, Int)]
@@ -93,6 +103,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
     d.io.wordRead.ready.poke(false.B)
     for (t <- 0 until ReadTarget.Count) {
       d.io.memory(t).ready.poke(false.B); d.io.done(t).ready.poke(false.B)
+      d.io.schedulePermit(t).poke(true.B)
     }
     def b(x: Bool): Boolean = x.peek().litToBoolean
     def u(x: UInt): BigInt = x.peek().litValue
@@ -109,24 +120,43 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       heldOutputs.get(key).foreach(old => assert(valid && old == value, s"unstable $key at cycle $cycle"))
       if (valid && !ready) heldOutputs(key) = value else heldOutputs.remove(key)
     }
-    // Exact TileLink model: greedily choose a naturally aligned power of two
-    // <= remaining (16..64). Every Get is independently checked for containment.
+    // Fetch a 64B-expanded readable backing window. Get size and raw beat size
+    // are independent: even a 4KiB Get emits ordered 64B words, not one beat.
     private def enqueueDram(p: Plan): Unit = {
-      var a = p.address
-      var offset = 0
-      while (offset < p.bytes) {
-        val size = Seq(64, 32, 16).find(n => a % n == 0 && n <= p.bytes - offset).get
+      assert(p.bytes > 0 && p.address % 16 == 0 && p.bytes % 16 == 0)
+      val logicalEnd = p.address + p.bytes
+      val fetchStart = p.address / 64 * 64
+      val fetchEnd = (logicalEnd + 63) / 64 * 64
+      fetchWindows += ((p.id, fetchStart, fetchEnd))
+      val supported = Iterator.iterate(maxGetBytes)(_ / 2).takeWhile(_ >= 64).toVector
+      var a = fetchStart
+      var ordinal = 0
+      while (a < fetchEnd) {
+        val size = supported.find(n => a % n == 0 && a + n <= fetchEnd).get
         assert((size & (size - 1)) == 0 && a % size == 0)
-        assert(a >= p.address && a + size <= p.address + p.bytes, "TL over-read")
+        assert(a >= fetchStart && a + size <= fetchEnd, "Get outside expanded window")
+        assert(!supported.exists(n => n > size && a % n == 0 && a + n <= fetchEnd), "non-maximal Get")
         gets += ((a, size))
-        val first = (a % 64).toInt / 16
-        val raw = (0 until 64).foldLeft(BigInt(0)) { (v, i) =>
-          val laneByte = if (i >= first * 16 && i < first * 16 + size) dramByte(a + i - first * 16) else 0xde
-          v | (BigInt(laneByte) << (8 * i))
+        for (word <- 0 until size by 64) {
+          val wordAddress = a + word
+          val start = wordAddress.max(p.address)
+          val end = (wordAddress + 64).min(logicalEnd)
+          val first = ((start - wordAddress) / 16).toInt
+          val lanes = ((end - start) / 16).toInt
+          val offset = (start - p.address).toInt
+          assert(lanes > 0 && lanes <= 4)
+          val raw = (0 until 64).foldLeft(BigInt(0)) { (v, i) =>
+            // Poison padding is readable but must never reach OCM/IB coverage.
+            val laneByte = if (wordAddress + i >= start && wordAddress + i < end) dramByte(wordAddress + i) else 0xde
+            v | (BigInt(laneByte) << (8 * i))
+          }
+          val beat = Beat(p.id, raw, offset, first, lanes, wordAddress + 64 == fetchEnd)
+          rawWords += ((p.id, wordAddress, first, lanes))
+          if (word + 64 == size) getEnds += ((p.id, wordAddress))
+          dramQueue.enqueue((cycle + (if (stalls) 3 + ordinal % 3 else 1), beat))
+          ordinal += 1
         }
-        val beat = Beat(p.id, raw, offset, first, size / 16, offset + size == p.bytes)
-        dramQueue.enqueue((cycle + (if (stalls) 3 + (offset / 16) % 3 else 1), beat))
-        a += size; offset += size
+        a += size
       }
     }
     def tick(): Unit = {
@@ -157,8 +187,10 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       val dramReq = d.io.dram.request
       val rp = plan(dramReq.bits.plan)
       stability("dramRequest", b(dramReq.valid), b(dramReq.ready),
-        idSnapshot(rp.id) ++ Seq(rp.address, rp.bytes, rp.dest, rp.canonical, rp.phase,
-          if (rp.fill) BigInt(1) else BigInt(0)))
+        idSnapshot(rp.id) ++ Seq(rp.address, rp.bytes, rp.dest, rp.canonical, rp.phase, rp.stream,
+          if (rp.fill) BigInt(1) else BigInt(0), if (rp.ib) BigInt(1) else BigInt(0),
+          if (rp.chunkLast) BigInt(1) else BigInt(0), if (rp.streamLast) BigInt(1) else BigInt(0),
+          u(dramReq.bits.plan.fillAddress), u(dramReq.bits.plan.region)))
       if (b(dramReq.valid) && b(dramReq.ready)) { dramRequests += rp; enqueueDram(rp) }
       val wr = d.io.wordRead
       stability("ibWord", b(wr.valid), b(wr.ready), Seq(u(wr.bits.wordAddress), u(wr.bits.laneMask)))
@@ -267,7 +299,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
     }
   }
 
-  it should "align exact 16B ranges with poisoned raw lanes and separate TL and chunk ends" in {
+  it should "align expanded DRAM words and IB lanes with poisoned padding and exact logical bytes" in {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d)
       var id = 0
@@ -278,7 +310,9 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
         s.issue(bytes = length, refill = id, dest = 32)
         s.check(id, span(a, length), dest = 32)
       }
-      assert(s.gets.contains((BigInt(0x1030), 16)) && s.gets.contains((BigInt(0x1040), 16)))
+      assert(s.gets.forall { case (a, n) => a % 64 == 0 && n >= 64 })
+      val edge = s.rawWords.filter(_._1.refill == 17) // offset=48, length=32
+      assert(edge.map(x => (x._2, x._3, x._4)).toSeq == Seq((BigInt(0x1000), 3, 1), (BigInt(0x1040), 0, 1)))
       s.configure(Config(base = 0x1ff0, tileBytes = 144, tail = 144))
       s.issue(bytes = 144, refill = 100)
       s.check(100, span(0x1ff0, 144))
@@ -311,7 +345,8 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       val trace = for (m <- 0 until 2; n <- 0 until 3; k <- 0 until 3;
                        a <- span(BigInt(0x1000 + m * 0x2000 + k * 256), if (k == 2) 64 else 256)) yield a
       s.check(1, trace)
-      assert(s.plans.take(3).map(_.canonical).toSeq == Seq(0x1000, 0x1100, 0x1200).map(BigInt(_)))
+      assert(s.plans.take(3).map(_.canonical).toSeq == Seq.fill(3)(BigInt(0x1000)))
+      assert(s.plans.take(3).forall(_.bytes == 576))
       s.configure(Config(rows = 2, passes = 4, tiles = 3, rowStride = 0x1000,
         tileStride = 16, tileBytes = 16, tail = 16, mode = ReadSupplyMode.LocalRowCache))
       s.issue(bytes = 4096, refill = 2)
@@ -563,6 +598,200 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       assert(s.plans.filter(_.id.refill == 2).forall(_.ib))
       assert(s.writes.count(_._1.refill == 3) == 1024)
       assert(s.writes.count(_._1.refill == 2) == 0)
+    }
+  }
+
+  it should "merge dense compact and non power of two tiles without crossing a pass" in {
+    test(new DmaReadHarness) { d =>
+      val s = new Sim(d)
+      for ((c, id) <- Seq(
+        Config(tiles = 16) -> 1,
+        Config(tiles = 256, tileBytes = 16, tail = 16, tileStride = 16) -> 2)) {
+        val before = s.gets.size
+        s.configure(c); s.issue(bytes = 4096, refill = id); s.check(id, span(0x1000, 4096))
+        val ps = s.plans.filter(_.id.refill == id)
+        assert(ps.size == 1 && ps.head.bytes == 4096)
+        assert(s.gets.drop(before).toSeq == Seq((BigInt(0x1000), 4096)))
+        assert(s.rawWords.count(_._1.refill == id) == 64)
+      }
+      // Seven 144B tiles + a 48B tail = 1056B per pass. Stop inside tile 0,
+      // finish the pass, then rewind for pass 1 with no tile division in DUT.
+      s.configure(Config(base = 0x1400, passes = 2, tiles = 8, tileStride = 144, tileBytes = 144, tail = 48))
+      s.issue(bytes = 80, refill = 3); s.check(3, span(0x1400, 80), streamLast = false)
+      s.issue(bytes = 976, refill = 4); s.check(4, span(0x1450, 976), streamLast = false)
+      s.issue(bytes = 1056, refill = 5); s.check(5, span(0x1400, 1056))
+      assert(s.plans.filter(_.id.refill >= 3).map(_.bytes).toSeq == Seq(80, 976, 1056))
+      info("Dense 16x256B and compact 256x16B: each 1 segment / 1 Get / 64 raw beats")
+    }
+  }
+
+  it should "fetch 65 expanded words for an unaligned 4KiB payload and fill only valid bytes" in {
+    test(new DmaReadHarness) { d =>
+      val s = new Sim(d)
+      s.map()
+      val c = Config(base = 0x1010, tiles = 16)
+      s.configure(c); s.issue(bytes = 4096, refill = 1); s.check(1, span(0x1010, 4096))
+      assert(s.plans.map(_.bytes).toSeq == Seq(4080, 16))
+      assert(s.fetchWindows.map(x => (x._2, x._3)).toSeq == Seq(
+        (BigInt(0x1000), BigInt(0x2000)), (BigInt(0x2000), BigInt(0x2040))))
+      assert(s.gets.toSeq == Seq((BigInt(0x1000), 4096), (BigInt(0x2000), 64)))
+      assert(s.rawWords.size == 65)
+      val ds = s.deliveries.filter(_.id.refill == 1)
+      assert(ds.map(_.bytes.size).toSeq == Seq(48) ++ Seq.fill(63)(64) ++ Seq(16))
+      assert(ds.map(_.mask).toSeq == Seq(7) ++ Seq.fill(63)(15) ++ Seq(1))
+      assert(s.writes.map(_._2).toVector == span(0x8010, 4096))
+      assert(s.ib.keySet.toSet == span(0x8010, 4096).toSet)
+      // Padding in either page is still invalid for IB-only consumers.
+      for ((a, id) <- Seq(0x1000 -> 2, 0x2010 -> 3)) {
+        s.configure(Config(base = a, tileBytes = 16, tail = 16, ibOnly = true))
+        s.issue(bytes = 16, refill = id)
+        assert(s.finish(id).error && !s.plans.exists(_.id.refill == id))
+      }
+      val before = s.dramRequests.size
+      s.configure(c); s.issue(bytes = 4096, refill = 4); s.check(4, span(0x1010, 4096))
+      assert(s.dramRequests.size == before && s.plans.filter(_.id.refill == 4).forall(_.ib))
+      info("0x1010+4096B: 2 segments (4080/16), Gets 4096/64B, 65 raw beats, masks 7/15.../1")
+    }
+  }
+
+  it should "keep whole raw words and one logical last with a small maximum TL Get profile" in {
+    test(new DmaReadHarness) { d =>
+      val s = new Sim(d, maxGetBytes = 128)
+      s.configure(Config(tiles = 16))
+      s.issue(bytes = 4096, refill = 1); s.check(1, span(0x1000, 4096))
+      assert(s.plans.size == 1 && s.gets.size == 32 && s.gets.forall(_._2 == 128))
+      assert(s.rawWords.size == 64 && s.getEnds.size == 32)
+      assert(s.deliveries.size == 64 && s.deliveries.forall(_.mask == 15))
+      assert(s.deliveries.count(_.chunkLast) == 1)
+      info("128B maximum Get profile: 1 segment / 32 Gets / 64 raw beats / 1 chunk last")
+    }
+  }
+
+  it should "preview five independent targets before permits and accept each winner only once" in {
+    test(new DmaReadHarness) { d =>
+      val s = new Sim(d)
+      s.map()
+      s.configure(Config())
+      s.issue(refill = 1); s.check(1, span(0x1000, 256))
+      val streams = Seq(0, 1, 3, 4, 5)
+      val bases = Seq(0x1000, 0x4000, 0x1040, 0x5000, 0x6000)
+      val contexts = Seq(1, 21, 1, 23, 24)
+      for (t <- 0 until 5) {
+        s.configure(Config(stream = streams(t), base = bases(t), tileBytes = 64, tail = 64))
+        d.io.schedulePermit(t).poke(false.B)
+      }
+      val beforeDram = s.dramRequests.size
+      val beforeWrites = s.writes.size
+      for (t <- 0 until 5) s.issue(stream = streams(t), target = t, bytes = 64,
+        refill = 10 + t, context = contexts(t), phase = 30 + t, dest = 16 * t)
+      def candidates: Vector[Plan] = (0 until 5).map { t =>
+        d.io.nextReadRequest(t).valid.expect(true.B)
+        s.plan(d.io.nextReadRequest(t).bits)
+      }.toVector
+      val preview = candidates
+      assert(preview.map(_.ib) == Vector(true, false, true, false, false))
+      for (t <- 0 until 5) {
+        assert(preview(t).id == Id(t, contexts(t), 1, 10 + t))
+        assert(preview(t).canonical == bases(t) && preview(t).phase == 30 + t && preview(t).dest == 16 * t)
+      }
+      s.dramAllow = false
+      for (_ <- 0 until 16) {
+        assert(candidates == preview)
+        d.io.sourceAvailable(0).expect(true.B); d.io.sourceAvailable(1).expect(true.B)
+        s.tick()
+      }
+      assert(s.plans.size == 1 && s.dramRequests.size == beforeDram && s.writes.size == beforeWrites)
+      for (t <- Seq(0, 1)) d.io.schedulePermit(t).poke(true.B)
+      s.tick()
+      for (t <- 0 until 5) d.io.schedulePermit(t).poke(false.B)
+      val accepted = s.plans.filter(_.id.refill >= 10).toVector
+      assert(accepted.size == 2 && accepted.count(_.ib) == 1 && accepted.map(_.id.target).distinct.size == 2)
+      assert(accepted.map(_.id.target).toSet == Set(ReadTarget.UB, ReadTarget.WB))
+      d.io.sourceAvailable(0).expect(false.B)
+      val ibWinner = accepted.find(_.ib).get
+      val dramWinner = accepted.find(x => !x.ib).get
+      for (x <- accepted) d.io.nextReadRequest(x.id.target).valid.expect(false.B)
+      s.check(ibWinner.id.refill, span(BigInt(bases(ibWinner.id.target)), 64), dest = ibWinner.id.target * 16)
+      assert(s.dramRequests.size == beforeDram)
+      for (t <- 0 until 5 if !accepted.exists(_.id.target == t)) d.io.nextReadRequest(t).valid.expect(true.B)
+      s.dramAllow = true
+      s.check(dramWinner.id.refill, span(BigInt(bases(dramWinner.id.target)), 64), dest = dramWinner.id.target * 16)
+      for (t <- 0 until 5) d.io.schedulePermit(t).poke(true.B)
+      for (t <- 0 until 5) s.check(10 + t, span(BigInt(bases(t)), 64), dest = 16 * t)
+      assert(s.plans.count(_.id.refill >= 10) == 5)
+      assert(s.plans.filter(_.id.refill >= 10).map(_.id).distinct.size == 5)
+    }
+  }
+
+  it should "refresh a waiting source preview on commit while preserving epoch and IB only rules" in {
+    test(new DmaReadHarness) { d =>
+      val s = new Sim(d)
+      s.map()
+      for (stream <- Seq(0, 1, 3, 4, 5)) s.configure(Config(stream = stream,
+        base = if (stream == 5) 0x2100 else 0x2000, tileBytes = 64, tail = 64, ibOnly = stream == 5))
+      for (t <- 1 until 5) d.io.schedulePermit(t).poke(false.B)
+      s.issue(stream = 1, target = 1, bytes = 64, refill = 2, phase = 8, dest = 48)
+      s.issue(stream = 3, target = 2, bytes = 64, refill = 5, epoch = 2)
+      s.issue(stream = 4, target = 3, bytes = 64, refill = 6, context = 2)
+      val old = s.plan(d.io.nextReadRequest(1).bits)
+      assert(!old.ib && old.fill && old.bytes == 64)
+      s.fillAllow = false
+      s.issue(bytes = 64, refill = 3)
+      s.waitFor(s.deliveries.exists(_.id.refill == 3))
+      for (_ <- 0 until 12) {
+        d.io.nextReadRequest(1).valid.expect(true.B)
+        assert(s.plan(d.io.nextReadRequest(1).bits) == old)
+        s.tick()
+      }
+      assert(s.writes.isEmpty)
+      s.issue(stream = 5, target = 4, bytes = 64, refill = 7)
+      d.io.nextReadRequest(4).valid.expect(false.B)
+      assert(s.finish(7).error && !s.plans.exists(_.id.refill == 7))
+      s.fillAllow = true
+      s.waitFor(s.writes.count(_._1.refill == 3) == 64)
+      val fresh = s.plan(d.io.nextReadRequest(1).bits)
+      assert(fresh.ib && !fresh.fill && fresh.address == 0x9000)
+      assert(fresh.id == old.id && fresh.phase == old.phase && fresh.dest == old.dest && fresh.canonical == old.canonical)
+      for (t <- Seq(2, 3)) {
+        d.io.nextReadRequest(t).valid.expect(true.B)
+        d.io.nextReadRequest(t).bits.sourceIB.expect(false.B)
+        d.io.nextReadRequest(t).bits.fill.expect(false.B)
+      }
+      s.check(3, span(0x2000, 64))
+      val before = s.dramRequests.size
+      d.io.schedulePermit(1).poke(true.B)
+      s.check(2, span(0x2000, 64), dest = 48)
+      assert(s.dramRequests.size == before)
+      for (t <- Seq(2, 3)) d.io.schedulePermit(t).poke(true.B)
+      s.check(5, span(0x2000, 64)); s.check(6, span(0x2000, 64))
+    }
+  }
+
+  it should "preview IB 512B then DRAM 3584B as one reserved 4KiB logical refill" in {
+    test(new DmaReadHarness) { d =>
+      val s = new Sim(d)
+      s.map()
+      s.configure(Config(tiles = 2))
+      s.issue(bytes = 512, refill = 1); s.check(1, span(0x1000, 512))
+      s.configure(Config(tiles = 16))
+      d.io.schedulePermit(0).poke(false.B)
+      s.issue(bytes = 4096, refill = 2, phase = 9, dest = 96)
+      val first = s.plan(d.io.nextReadRequest(0).bits)
+      assert(first.ib && first.bytes == 512 && first.canonical == 0x1000 && first.dest == 96 && !first.chunkLast)
+      d.io.schedulePermit(0).poke(true.B); s.tick(); d.io.schedulePermit(0).poke(false.B)
+      d.io.nextReadRequest(0).valid.expect(false.B)
+      s.waitFor(s.b(d.io.nextReadRequest(0).valid))
+      val next = s.plan(d.io.nextReadRequest(0).bits)
+      assert(!next.ib && next.fill && next.bytes == 3584 && next.canonical == 0x1200 && next.dest == 608)
+      assert(next.id == first.id && next.phase == first.phase && next.chunkLast && next.streamLast)
+      assert(!s.dones.exists(_.id.refill == 2))
+      for (_ <- 0 until 8) { assert(s.plan(d.io.nextReadRequest(0).bits) == next); s.tick() }
+      assert(s.plans.count(_.id.refill == 2) == 1)
+      d.io.schedulePermit(0).poke(true.B); s.tick(); d.io.schedulePermit(0).poke(false.B)
+      s.check(2, span(0x1000, 4096), dest = 96)
+      assert(s.plans.filter(_.id.refill == 2).map(x => (x.ib, x.bytes)).toSeq == Seq(true -> 512, false -> 3584))
+      assert(s.writes.filter(_._1.refill == 2).map(_._2).toVector == span(0x8200, 3584))
+      info("Mixed refill: IB 512B + DRAM 3584B, same identity, offsets 96/608, one chunk last and done")
     }
   }
 }
