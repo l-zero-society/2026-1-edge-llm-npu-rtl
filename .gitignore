@@ -27,5 +27,6 @@ Thumbs.db
 # 오늘 수동으로 설치한 툴 관련 (Dockerfile이 대신 해줄 영역)
 firtool_extracted/
 *.jar
-*.tar.gztest_run_dir/
+*.tar.gz
+test_run_dir/
 *.gch

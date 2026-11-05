@@ -2,6 +2,7 @@
 
 # Override for local sbt: make quant-test RTL_SBT=sbt
 RTL_SBT ?= docker exec -e MAKEFLAGS lzero_rtl_env sbt
+DMA_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))'
 VPU1_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(f => Set("VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala").contains(f.getName)))'
 COMPUTE_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(f => Set("MXU.scala", "Orch.scala", "Accum.scala", "ComputeTimer.scala", "TPU.scala", "Transposer.scala", "ZeroPadder.scala", "Compactor.scala", "LutProgrammingController.scala", "VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala", "NormUnit.scala", "Rope.scala", "LineParamOcm.scala", "Ocm.scala", "VPU.scala", "Comp.scala").contains(f.getName)))'
 
@@ -104,6 +105,15 @@ param-ocm-test:
 
 production-compile:
 	$(RTL_SBT) $(COMPUTE_SOURCES) compile
+
+.PHONY: dma-read-test dma-read-compile
+dma-read-test:
+	$(RTL_SBT) $(DMA_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "DmaRead_Test.scala"))' \
+	  'testOnly npu.dma.DmaReadTest'
+
+dma-read-compile:
+	$(RTL_SBT) $(DMA_SOURCES) compile
 
 zero-padder-test:
 	$(RTL_SBT) \
