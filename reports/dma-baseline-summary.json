@@ -1,0 +1,13 @@
+{
+  "head": "c75da8b5c62927998ab6d676c8d2b9599c3d7909",
+  "command": "make -j1 dma-read-test dma-read-compile RTL_SBT=sbt",
+  "suite": {
+    "name": "npu.dma.DmaReadTest",
+    "tests": "18",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "timestamp": "2026-11-06T02:38:13",
+    "time": "600.847"
+  }
+}

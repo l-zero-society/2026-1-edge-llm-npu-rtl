@@ -1,0 +1,159 @@
+{
+  "head": "c75da8b5c62927998ab6d676c8d2b9599c3d7909",
+  "date": "2026-11-06 Asia/Seoul",
+  "commands": [
+    {
+      "command": "make -j1 dma-read-test dma-read-compile dma-arbiter-test RTL_SBT=sbt",
+      "exit": 0
+    },
+    {
+      "command": "make -j1 dma-read-test dma-read-compile RTL_SBT=sbt",
+      "exit": 0
+    },
+    {
+      "command": "sbt 'Test / compile'",
+      "exit": 1,
+      "baselineErrors": [
+        "EdgeNPUTop.scala:8 MacUnit",
+        "EdgeNPUTop.scala:9 MXU_16",
+        "EdgeNPUTop.scala:10 DataOrchUnit_16",
+        "Sequencer.scala:28 out_enable"
+      ]
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "suites": [
+    {
+      "name": "npu.dma.DmaReadTest",
+      "tests": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 730.872,
+      "startedAsiaSeoul": "2026-11-06T03:57:03",
+      "cases": [
+        "DMA read path should align expanded DRAM words and IB lanes with poisoned padding and exact logical bytes",
+        "DMA read path should traverse GEMM rows passes K tails and compact row cache using canonical addresses",
+        "DMA read path should keep W1 W2 cursors independent across explicit fusion phases and weight stride jumps",
+        "DMA read path should supply linear direct Quant Freq and NormSpill payloads with configured repeat boundaries",
+        "DMA read path should supply weight working sets once in local cache mode and repeat them in STREAM mode",
+        "DMA read path should commit real fill bytes before hits and preserve gaps partial pages and epochs",
+        "DMA read path should split hit miss and mapping boundaries without early chunk last or filling padding",
+        "DMA read path should reject invalid IB only data without a fabricated DRAM fallback",
+        "DMA read path should overlap independent full width returns and reserve a target through delayed fill commit",
+        "DMA read path should advance once at accepted dispatch and preserve a latched issue through long backend stalls",
+        "DMA read path should continue a partially issued tile across chunks and backend transfer limits",
+        "DMA read path should arbitrate conflicting IB read and fill commands on a shared backing port",
+        "DMA read path should merge dense compact and non power of two tiles without crossing a pass",
+        "DMA read path should fetch 65 expanded words for an unaligned 4KiB payload and fill only valid bytes",
+        "DMA read path should keep whole raw words and one logical last with a small maximum TL Get profile",
+        "DMA read path should preview five independent targets before permits and accept each winner only once",
+        "DMA read path should refresh a waiting source preview on commit while preserving epoch and IB only rules",
+        "DMA read path should use a fully published 512B tail page then DRAM for the nonresident range"
+      ]
+    },
+    {
+      "name": "npu.dma.DmaSourceSchedulerTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 3.387,
+      "startedAsiaSeoul": "2026-11-06T03:40:43",
+      "cases": [
+        "DMA source scheduler should apply P0 P1 P2 and advance only on actual accepts with independent sources",
+        "DMA source scheduler should round robin equal priorities independently across all five targets",
+        "DMA source scheduler should promote an aged prefetch under continuous P0 and preserve age across source changes",
+        "DMA source scheduler should hold an offered admission descriptor and reserve nothing until refill fire"
+      ]
+    },
+    {
+      "name": "npu.dma.DmaReadArbiterTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 689.038,
+      "startedAsiaSeoul": "2026-11-06T03:40:43",
+      "cases": [
+        "DMA scheduler integration should drain each source while the other stalls and accept two sources after independent admissions",
+        "DMA scheduler integration should allow IB during long DRAM stalls and DRAM during long IB stalls",
+        "DMA scheduler integration should reserve once and finish continuations despite full hungry and enable changes",
+        "DMA scheduler integration should keep tail full thresholds chunk exhaustion and simultaneous consume commit accounting exact",
+        "DMA scheduler integration should preserve buffered error bytes until confirmed discard and wait for every producer page",
+        "DMA scheduler integration should apply the 4096B free threshold even to tail requests and release only consumed occupancy",
+        "DMA scheduler integration should retain partially delivered error data until an identity matched discard commit",
+        "DMA scheduler integration should admit all five staged targets fairly without a source busy global head of line",
+        "DMA scheduler integration should drain a staged old consumer before releasing its page without a control hold deadlock"
+      ]
+    },
+    {
+      "name": "npu.dma.IbPageLifecycleTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 331.544,
+      "startedAsiaSeoul": "2026-11-06T03:40:43",
+      "cases": [
+        "IB page publication and operation handoff should publish a 4096B page only after every unique lane despite duplicate small refills",
+        "IB page publication and operation handoff should compact every head offset and tail to page zero and replay only fully published payloads",
+        "IB page publication and operation handoff should hold the second derived write without duplicate OCM data or early publication",
+        "IB page publication and operation handoff should retain output as next input across A B swaps and reject unsafe or stale mutations",
+        "IB page publication and operation handoff should arbitrate output and DRAM fill commits and serialize shared IB read write conflicts"
+      ]
+    }
+  ],
+  "uniqueTests": 36,
+  "failures": 0,
+  "skipped": 0,
+  "observations": {
+    "defaultAligned4KiB": {
+      "segments": 1,
+      "gets": 1,
+      "rawBeats": 64
+    },
+    "unaligned0x1010_4096": {
+      "segments": [
+        4080,
+        16
+      ],
+      "gets": [
+        4096,
+        64
+      ],
+      "rawBeats": 65,
+      "ibMaskedCommits": 128,
+      "noStallCycles": 134
+    },
+    "maxGet128_4096": {
+      "segments": 1,
+      "gets": 32,
+      "rawBeats": 64
+    },
+    "systemAlignedIndependent": {
+      "dualSourceAcceptCycles": 1,
+      "dualFullBeatCycles": 64
+    },
+    "handoffAdditionalDramRequests": 0,
+    "handoffRetainedReads": 3,
+    "fairnessAgeLimit": 8
+  },
+  "finalSourceSha256": {
+    "src/main/scala/npu/dma/DmaReadEngine.scala": "cfa93a6d976881db481099773cb150828df0cb3956bf9e80f2c35a914331a653",
+    "src/main/scala/npu/dma/DmaReadScheduler.scala": "e63be1371b3a2b2f186f36a8825ab38cec8784473de76dddb8c68810547584fc",
+    "src/main/scala/npu/dma/DmaReadSystem.scala": "5c49326a5c5e59eb486171753cd1b2eae3b4ae222da7ab8087884e737c87b58c",
+    "src/main/scala/npu/dma/IbBurstReader.scala": "dc7f9e0fdeb1ee099bb2b94b10e8c7d280a4aee5719034d49f92c99e3415ad03",
+    "src/main/scala/npu/dma/IbCompactWriter.scala": "a08eb2bd50c2266d65aefd80e2c5e383cf6520e5cedeff0c20db05f2bcebd7b3",
+    "src/main/scala/npu/dma/IbPageTable.scala": "40e622a114015d40b15c8040cb225c00239cd8caa12d27e1c899d67bab691baa",
+    "src/main/scala/npu/dma/IbPageTypes.scala": "1093ed061e12ba726a8d74ff4ed14b875f6366e59f4e687632d300d0eb3d01c4",
+    "src/main/scala/npu/dma/IbReadFillArbiter.scala": "a4224b0d674536e220883dc451f28808d71b1ba7b3ea6ebff56b6a648a21371e",
+    "src/main/scala/npu/dma/ReadTypes.scala": "09c119ae5086eac3511c77fb0dafae850282857c3e4524cfd3f7ef0f23c79e31",
+    "src/test/scala/DmaReadScheduler_Test.scala": "59c865badcca2e7e760d1e901289ec060a9a28c8d7fcd742d9a417faae6f9fc7",
+    "src/test/scala/DmaRead_Test.scala": "9f57b26cbe63eca6884e9ee72662efaeb0c1a64b6569115ff51d1844645ac0e7",
+    "src/test/scala/IbPageLifecycle_Test.scala": "f5cef9f0caf52ab666e987b7178567799ece283916e4edad0de11559b91c9f77"
+  }
+}

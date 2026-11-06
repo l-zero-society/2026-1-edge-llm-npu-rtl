@@ -13,7 +13,13 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   private val streams = ReadStream.Count
   val io = IO(new Bundle {
     val config = Flipped(Decoupled(new ReadStreamConfig))
-    val mapping = Flipped(Decoupled(new IbMappingUpdate(p)))
+    val pageCommand = Flipped(Decoupled(new IbPageCommand(p)))
+    val pageResult = Decoupled(new IbPageResult(p))
+    val producerWrite = Flipped(Decoupled(new IbProducerWrite(p)))
+    val producerResult = Decoupled(new IbProducerResult)
+    val pages = Output(Vec(p.cachePages, new IbPageState))
+    val writersDrained = Output(Bool())
+    val controlDrained = Input(Bool())
     val refill = Flipped(Decoupled(new RefillRequest))
     val dram = new ReadBurstPort(p)
     val ib = new ReadBurstPort(p)
@@ -28,8 +34,6 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     val drained = Output(Bool())
   })
   def min(a: UInt, b: UInt): UInt = Mux(a < b, a, b)
-  def pageIndex(relative: UInt): UInt =
-    if (p.pagesPerRegion == 1) 0.U else relative(11 + log2Ceil(p.pagesPerRegion), 12)
   val configs = Reg(Vec(streams, new ReadStreamConfig))
   val configured = RegInit(VecInit(Seq.fill(streams)(false.B)))
   val exhausted = RegInit(VecInit(Seq.fill(streams)(false.B)))
@@ -46,9 +50,32 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   val rowBase = Reg(Vec(streams, UInt(64.W)))
   val passBase = Reg(Vec(streams, UInt(64.W)))
   val tileBase = Reg(Vec(streams, UInt(64.W)))
-  val mappings = RegInit(VecInit(Seq.fill(p.regions)(0.U.asTypeOf(new IbRegion))))
-  // Unique 16B coverage bits; repeated writes cannot manufacture a valid page.
-  val coverage = RegInit(VecInit(Seq.fill(p.regions)(VecInit(Seq.fill(p.pagesPerRegion)(0.U(256.W))))))
+  val table = Module(new IbPageTable(p))
+  val fillWriter = Module(new IbCompactWriter)
+  val producer = Module(new IbProducerAdapter(p))
+  val writeArbiter = Module(new IbWriteArbiter)
+  io.pages := table.io.pages
+  table.io.command <> io.pageCommand
+  io.pageResult <> table.io.result
+  table.io.controlDrained := io.drained && io.controlDrained
+  table.io.writersDrained := producer.io.drained
+  io.writersDrained := producer.io.drained && table.io.pages.map(x =>
+    !x.allocated || x.metadata.writer =/= IbWriter.Output.U || !x.writerOpen).reduce(_ && _)
+  producer.io.pages := table.io.pages
+  producer.io.request.valid := io.producerWrite.valid && !io.pageCommand.valid && !io.config.valid
+  producer.io.request.bits := io.producerWrite.bits
+  io.producerWrite.ready := producer.io.request.ready && !io.pageCommand.valid && !io.config.valid
+  io.producerResult <> producer.io.result
+  writeArbiter.io.in(0) <> fillWriter.io.write
+  writeArbiter.io.in(1) <> producer.io.write
+  io.fill <> writeArbiter.io.out
+  table.io.commit.valid := io.fill.fire
+  table.io.commit.bits := io.fill.bits
+  table.io.commitFinal := fillWriter.io.input.fire
+  table.io.acquire.valid := false.B; table.io.acquire.bits := 0.U.asTypeOf(new IbReaderLease(p))
+  table.io.release.valid := false.B; table.io.release.bits := 0.U.asTypeOf(new IbReaderLease(p))
+  fillWriter.io.input.valid := false.B
+  fillWriter.io.input.bits := 0.U.asTypeOf(new IbCompactWrite)
   val active = RegInit(VecInit(Seq.fill(targets)(false.B)))
   val pending = RegInit(VecInit(Seq.fill(targets)(false.B)))
   val requests = Reg(Vec(targets, new RefillRequest))
@@ -58,6 +85,7 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   val completion = Reg(Vec(targets, new RefillDone))
   val complete = RegInit(VecInit(Seq.fill(targets)(false.B)))
   val sourceBusy = RegInit(VecInit(Seq.fill(2)(false.B)))
+  table.io.fillDrained := !sourceBusy(0)
   val sourceIssued = RegInit(VecInit(Seq.fill(2)(false.B)))
   val sourcePlan = Reg(Vec(2, new ReadPlan(p)))
   val received = Reg(Vec(2, UInt(13.W)))
@@ -65,8 +93,7 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   val fillSent = RegInit(VecInit(Seq.fill(2)(false.B)))
 
   io.drained := !active.asUInt.orR && !sourceBusy.asUInt.orR
-  io.config.ready := io.drained && !io.mapping.valid
-  io.mapping.ready := io.drained
+  io.config.ready := io.drained && io.controlDrained && producer.io.drained && !io.pageCommand.valid
   when(io.config.fire) {
     val c = io.config.bits
     assert(c.stream < streams.U)
@@ -96,36 +123,11 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     passBytes(c.stream) := length
     passRemaining(c.stream) := length
   }
-  when(io.mapping.fire) {
-    val u = io.mapping.bits
-    val m = u.mapping
-    assert(u.index < p.regions.U)
-    when(m.valid) {
-      assert(m.canonicalBase(11, 0) === 0.U && m.ibBase(11, 0) === 0.U)
-      assert(m.pageCount > 0.U && m.pageCount <= p.pagesPerRegion.U)
-      val size = m.pageCount << 12
-      assert((m.canonicalBase + size) > m.canonicalBase && (m.ibBase + size) > m.ibBase)
-      for (r <- 0 until p.regions) {
-        val old = mappings(r)
-        val oldSize = old.pageCount << 12
-        when(u.index =/= r.U && old.valid) {
-          assert(m.ibBase + size <= old.ibBase || old.ibBase + oldSize <= m.ibBase,
-            "IB regions must not physically alias")
-          when(old.contextId === m.contextId && old.epoch === m.epoch) {
-            assert(m.canonicalBase + size <= old.canonicalBase ||
-              old.canonicalBase + oldSize <= m.canonicalBase)
-          }
-        }
-      }
-    }
-    mappings(u.index) := m
-    for (page <- 0 until p.pagesPerRegion) { coverage(u.index)(page) := 0.U }
-  }
   val incoming = io.refill.bits
   val streamInUse = (0 until targets).map(t => active(t) && requests(t).stream === incoming.stream).reduce(_ || _)
   io.refill.ready := incoming.target < targets.U && incoming.stream < streams.U &&
     !active(incoming.target) && !streamInUse && configured(incoming.stream) &&
-    !exhausted(incoming.stream) && !io.config.valid && !io.mapping.valid
+    !exhausted(incoming.stream) && !io.config.valid && !io.pageCommand.valid
   when(io.refill.fire) {
     assert(incoming.payloadBytes > 0.U && incoming.payloadBytes <= 4096.U && incoming.payloadBytes(3, 0) === 0.U)
     assert(incoming.destinationOffset(3, 0) === 0.U)
@@ -159,32 +161,30 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     val traversalRoom = Mux(contiguous, runRoom, tileLength - within(s))
     val pageRoom = 4096.U(13.W) - address(11, 0)
     val candidate = min(min(remaining(t), traversalRoom), min(pageRoom, p.maxSegmentBytes.U))
-    val matches = Wire(Vec(p.regions, Bool()))
-    val boundary = Wire(Vec(p.regions, UInt(13.W)))
-    for (r <- 0 until p.regions) {
-      val m = mappings(r)
-      val sameContext = m.valid && m.contextId === req.contextId && m.epoch === req.epoch
-      val end = m.canonicalBase + (m.pageCount << 12)
-      matches(r) := sameContext && address >= m.canonicalBase && address < end
-      val distance = m.canonicalBase - address
-      boundary(r) := Mux(sameContext && address < m.canonicalBase && distance < candidate, distance, candidate)
+    val matches = Wire(Vec(p.cachePages, Bool()))
+    val blocked = Wire(Vec(p.cachePages, Bool()))
+    val boundary = Wire(Vec(p.cachePages, UInt(13.W)))
+    for (r <- 0 until p.cachePages) {
+      val state = table.io.pages(r)
+      val m = state.metadata
+      val same = state.allocated && m.contextId === req.contextId && m.epoch === req.epoch && m.logicalId === req.logicalId
+      val relative = address - m.canonicalStart
+      val inRange = state.allocated && address >= m.canonicalStart && relative < m.validBytes
+      matches(r) := same && inRange
+      blocked(r) := inRange && !m.dramReadable
+      val before = address < m.canonicalStart && (same || (state.allocated && !m.dramReadable))
+      val distance = m.canonicalStart - address
+      boundary(r) := Mux(matches(r), min(candidate, m.validBytes - relative),
+        Mux(before && distance < candidate, distance, candidate))
     }
-    val boundedBytes = boundary.reduce((a, b) => min(a, b))
+    val bytes = boundary.reduce((a, b) => min(a, b))
     val mapped = matches.asUInt.orR
     val region = PriorityEncoder(matches)
-    val mapping = mappings(region)
-    val relative = address - mapping.canonicalBase
-    val page = pageIndex(relative)
-    val pageCoverage = coverage(region)(page) >> address(11, 4)
-    val candidateMask = Fill(256, 1.U(1.W)) >> (256.U - (boundedBytes >> 4))
-    val holes = ~pageCoverage & candidateMask
-    // A committed prefix is an IB segment; stop before the first uncommitted
-    // lane. If the starting lane is invalid, conservatively miss the candidate.
-    val splitHitPrefix = mapped && pageCoverage(0) && holes.orR
-    val prefixBytes = Cat(PriorityEncoder(holes), 0.U(4.W))
-    val bytes = Mux(splitHitPrefix, prefixBytes, boundedBytes)
-    val mask = (Fill(256, 1.U(1.W)) >> (256.U - (bytes >> 4))) << address(11, 4)
-    val hit = mapped && (coverage(region)(page) & mask(255, 0)) === mask(255, 0)
+    val page = table.io.pages(region)
+    val mapping = page.metadata
+    val relative = address - mapping.canonicalStart
+    val hit = mapped && page.pageValid && mapping.consumers.orR
+    val cannotRead = (c.ibOnly && !hit) || (!hit && blocked.asUInt.orR)
     val tileEnd = !contiguous && within(s) + bytes === tileLength
     val passEnd = bytes === passRemaining(s)
     val rowEnd = passEnd && pass(s) === c.passes - 1.U
@@ -193,27 +193,29 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     plan.identity.target := t.U
     plan.identity.contextId := req.contextId
     plan.identity.epoch := req.epoch
+    plan.identity.logicalId := req.logicalId
     plan.identity.refillId := req.refillId
     plan.stream := s; plan.phase := req.phase
     plan.destinationOffset := req.destinationOffset + dispatched(t)
     plan.canonicalAddress := address
     plan.sourceIB := hit
-    plan.address := Mux(hit, mapping.ibBase + relative, address)
+    plan.address := Mux(hit, mapping.ibPageBase + relative, address)
     plan.payloadBytes := bytes
     plan.chunkLast := bytes === remaining(t) || streamEnd || (c.stopAtRowEnd && rowEnd)
     plan.streamLast := streamEnd
-    plan.fill := mapped && !hit
-    plan.fillAddress := mapping.ibBase + relative
+    plan.fill := mapped && !hit && page.writerOpen && mapping.writer === IbWriter.DramFill.U && mapping.dramReadable
+    plan.fillAddress := mapping.ibPageBase + relative
     plan.region := region
+    plan.generation := mapping.generation
     val eligible = active(t) && !pending(t) && !complete(t)
-    io.nextReadRequest(t).valid := eligible && !(c.ibOnly && !hit)
+    io.nextReadRequest(t).valid := eligible && !cannotRead
     io.nextReadRequest(t).bits := plan
     for (source <- 0 until 2) {
       arbiters(source).io.in(t).valid := io.nextReadRequest(t).valid &&
         io.schedulePermit(t) && hit === (source == 1).B
       arbiters(source).io.in(t).bits := plan
     }
-    when(eligible && c.ibOnly && !hit) {
+    when(eligible && cannotRead) {
       complete(t) := true.B
       completion(t).identity := plan.identity
       completion(t).committedBytes := committed(t)
@@ -253,8 +255,6 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     }
   }
 
-  io.fill.valid := false.B
-  io.fill.bits := 0.U.asTypeOf(new IbFillWrite)
   for ((port, source) <- Seq(io.dram, io.ib).zipWithIndex) {
     val arb = arbiters(source)
     val plan = sourcePlan(source)
@@ -267,6 +267,11 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
       sourceIssued(source) := false.B
       sourcePlan(source) := arb.io.out.bits
       received(source) := 0.U
+      if (source == 1) {
+        table.io.acquire.valid := true.B
+        table.io.acquire.bits.page := arb.io.out.bits.region
+        table.io.acquire.bits.generation := arb.io.out.bits.generation
+      }
       ocmSent(source) := false.B; fillSent(source) := false.B
     }
     port.request.valid := sourceBusy(source) && !sourceIssued(source)
@@ -284,7 +289,7 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     // IB hits never fill. Keep their ready cone independent of DRAM fill
     // arbitration; otherwise a shared IB port can close a combinational loop
     // through the pipelined word reader's metadata FIFO.
-    val fillAccept = if (source == 0) !plan.fill || fillSent(source) || io.fill.ready else true.B
+    val fillAccept = if (source == 0) !plan.fill || fillSent(source) || fillWriter.io.input.ready else true.B
     port.response.ready := receiving && ocmAccept && fillAccept
     for (t <- 0 until targets) {
       when(receiving && plan.identity.target === t.U) {
@@ -297,21 +302,17 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
         io.memory(t).bits.memoryStreamLast := segmentLast && plan.streamLast
       }
     }
-    // Only DRAM misses fill IB. IB hit and out-of-region miss never write it.
+    // Compact payload is repacked to allocation-relative IB lanes. The raw
+    // response stays held until OCM and every derived durable write complete.
     if (source == 0) {
-      io.fill.valid := receiving && port.response.valid && plan.fill && !fillSent(source)
-      val fillAddress = plan.fillAddress + response.payloadOffset
-      io.fill.bits.identity := plan.identity
-      io.fill.bits.wordAddress := fillAddress & "hffffffffffffffc0".U
-      io.fill.bits.data := response.data
-      io.fill.bits.laneMask := (laneMask << fillAddress(5, 4))(3, 0)
-      when(io.fill.fire) {
-        val region = plan.region
-        val page = pageIndex(plan.canonicalAddress + response.payloadOffset - mappings(region).canonicalBase)
-        val start = (plan.canonicalAddress + response.payloadOffset)(11, 4)
-        val bits = ((Fill(256, 1.U(1.W)) >> (256.U - response.laneCount)) << start)(255, 0)
-        coverage(region)(page) := coverage(region)(page) | bits
-      }
+      fillWriter.io.input.valid := receiving && port.response.valid && plan.fill && !fillSent(source)
+      fillWriter.io.input.bits.identity := plan.identity
+      fillWriter.io.input.bits.page := plan.region
+      fillWriter.io.input.bits.generation := plan.generation
+      fillWriter.io.input.bits.address := plan.fillAddress + response.payloadOffset
+      fillWriter.io.input.bits.data := compact & compactMask
+      fillWriter.io.input.bits.laneCount := response.laneCount
+      when(fillWriter.io.input.fire) { fillSent(source) := true.B }
     }
     when(receiving && port.response.valid) {
       if (source == 1) { assert(!plan.fill && plan.sourceIB) }
@@ -326,12 +327,16 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
       assert(response.payloadOffset +& bytes <= plan.payloadBytes)
       assert(response.segmentLast === (response.payloadOffset +& bytes === plan.payloadBytes))
       when(!ocmSent(source) && sinkReady) { ocmSent(source) := true.B }
-      when(plan.fill && !fillSent(source) && io.fill.ready) { fillSent(source) := true.B }
     }
     when(port.response.fire) {
       ocmSent(source) := false.B; fillSent(source) := false.B
       received(source) := received(source) + bytes
       when(segmentLast) {
+        if (source == 1) {
+          table.io.release.valid := true.B
+          table.io.release.bits.page := plan.region
+          table.io.release.bits.generation := plan.generation
+        }
         sourceBusy(source) := false.B
         pending(plan.identity.target) := false.B
         committed(plan.identity.target) := committed(plan.identity.target) + plan.payloadBytes

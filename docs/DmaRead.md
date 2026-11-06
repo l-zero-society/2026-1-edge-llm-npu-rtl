@@ -1,253 +1,275 @@
-# DMA read integration contract
+# DMA read, scheduler and IB page contract
 
-`npu.dma.DmaReadEngine` is the standalone DMA read prototype. The checkout has
-no production DRAM/TL transport or IB backing SRAM.
-`IbBurstReader` is production RTL; the DRAM/TL transport and IB backing store in
-`DmaRead_Test.scala` are **testbench models only**. Passing these tests does not
-validate an actual TileLink IP.
+Active contract: **2026-11-06 Asia/Seoul**. This supersedes region/prefix-hit and
+raw-offset-preserving fill in the [2026-11-05 history](DmaRead-2026-11-05.md).
+The Chisel implementation is a prototype with testbench DRAM/TL and IB storage.
+It does not implement a real TL IP, DMA output writer, instruction ABI, RF or CU
+controller. Existing UB/WB/QB/FB/NB, RF and ComputeUnit files are unchanged.
 
-No changes to ComputeUnit, UB/WB controllers, QB/FB controllers or RF are needed
-to compile/test this block. Existing OCM write interfaces are not lane-aware;
-they must be connected by their owners to the typed `memory` ports. Wiring a
-partial beat directly to an existing unconditional 64B write would be incorrect.
-Instruction decoding, SW ABI, bank swapping, output DMA writes and the central
-scheduler remain outside this block.
+## Blocks and state ownership
 
-## Configuration and logical traversal
-
-`config` accepts a `ReadStreamConfig` for Input, Weight1, Weight2, Quant, Freq or
-NormSpill. Each stream owns independent base, row/pass/tile/within-tile cursors;
-both weight streams may feed WB. Address is:
-
-```
-base + row*rowStride + pass*passStride + tile*tileStride + withinTile
-```
-
-Loop order is row -> pass -> tile -> bytes. The final tile of every pass uses
-`tailBytes`; other tiles use `tileBytes`. All bases/strides/payloads are multiples
-of 16B. Payloads and tiles are 16..4096B. Strides describe the actual tiled or
-transposed memory layout; there is no second IB traversal counter. Counts are
-strictly positive; the caller must provide addresses without 64-bit overflow.
-
-| Supply | Typed configuration |
+| Owner | State / responsibility |
 | --- | --- |
-| GEMM input STREAM | rows=M rows, passes=required N/phase passes, rowStride=input row stride, passStride=0, tile=K |
-| GEMM input LOCAL_ROW_CACHE | rows=M rows, passes=1, stopAtRowEnd=true; request once on each new-row event |
-| Weight STREAM | rows=M repeats, rowStride=0, passes=N groups, passStride=weight N stride, tile=K |
-| Weight local cache | rows=1, passes=N groups, tile=K; supply the unique working set once |
-| Dense INT8 | tileBytes=256, tileStride=physical tile spacing |
-| Compact input | tileBytes=16, tileStride=physical compact tile spacing |
-| Linear / VPU direct / Quant / Freq / NormSpill | base includes supplied offset; explicit tiles, tail, row/pass repeats and strides |
+| `DmaReadEngine` | Canonical stream cursors, target logical refill, source slots, latched backend descriptors, response identity/routing and OCM/fill exactly-once fanout |
+| `IbPageTable` | Allocation metadata, unique coverage, full publication, allocation generation, consumer leases, retained weights and outstanding IB readers |
+| `IbCompactWriter` | First/second derived masked-write acceptance for one held compact beat |
+| `IbProducerAdapter` | One captured output write and one durable result; rejects invalid producer writes before storage |
+| `IbWriteArbiter` | Round-robin physical DRAM-fill/output-writer arbitration; held selection under backpressure |
+| `DmaSourceScheduler` | Current-source priority, accepted-only RR and saturating age; no duplicate sourceBusy/response state |
+| `DmaReadScheduler` | Five pending request slots, fair admission, logical OCM reservation, completed chunk ledger and error/discard state |
+| `IbBurstReader`, `IbReadFillArbiter` | Existing ordered IB reads and optional shared physical-port arbitration |
 
-The upper layer chooses `supplyMode` (STREAM, LOCAL_ROW_CACHE or
-LOCAL_WEIGHT_CACHE). The engine normalizes LOCAL_ROW_CACHE to passes=1 and
-stopAtRowEnd=true, and LOCAL_WEIGHT_CACHE to rows=1. Thus callers may keep
-the logical STREAM counts when choosing a cache mode; the unique row/working
-set is supplied once. For weights, N is the pass dimension and M is the row
-repeat dimension with rowStride=0. Other streams use STREAM with explicit counts.
-For fusion, the cached WB working-set size is **W1 unique bytes + W2 unique
-bytes**. W1 and W2 configs/cursors remain separate. `refill.stream` and
-`refill.phase` explicitly select scheduler phase/block events in the existing
-output-group order. No physical burst count selects a phase. Input STREAM passes
-must include the externally required W2 input supply; local row cache supplies
-the unique row once and UB replays it. DMA does not implement UB chunk replay.
-QB/FB payload length is supplied explicitly, independent of their 64B/32B compute
-read units. The table defines hardware setup, not a newly assigned SW ABI.
+`DmaReadSystem` connects these blocks. Its two source paths remain independent.
+The engine's source RR remains a safe direct-engine fallback; the system's source
+scheduler emits at most one target permit per source, so its winner is definitive.
 
-`refill` carries target (UB/WB/QB/FB/NB), stream, phase, contextId, epoch,
-refillId, logical destinationOffset and payloadBytes (maximum chunk, <=4096B).
-It stops at the requested chunk length, stream end, or configured row boundary.
-Multiple refills continue the same stream cursor. The cursor advances exactly
-once when a segment is accepted into a source reservation, observable at
-`acceptedPlan`; backend request, return and commit happen later. A source request
-is latched and stable even if backend ready remains low. Stream exhaustion blocks
-further requests until reconfiguration. A failed IB-only resolution leaves the
-failed segment cursor unchanged and returns `done.error` with committed bytes.
+Prototype parameters (not a SW ABI):
 
-One logical refill is reserved per target; one target at a time may use a stream.
-Segments to a target commit in order. Within a pass, `tileStride == tileBytes`
-merges adjacent tiles, including a short final tail, up to the logical chunk,
-4KiB page/mapping/source boundary and `maxSegmentBytes`. Other strides retain
-tile boundaries. Pass/repeat/row and explicit refill/phase boundaries never merge.
-Sixteen dense 256B tiles or 256 compact 16B tiles at an aligned page start form
-one 4KiB segment. Other 16B multiples (e.g. 144B) are supported too.
-The pass length `(tiles-1)*tileBytes+tailBytes` is computed on configuration.
-Issue uses a residual-byte counter and address additions; it does not divide by
-tile size or iterate over all consumed tiles. Partial chunks resume that same
-byte cursor. `memoryChunkLast` occurs only at the logical
-chunk end; `memoryStreamLast` only at the stream end. `destinationOffset` advances
-by delivered payload bytes, not raw bus word sizes. Zero-length config payloads
-and refill requests are invalid and asserted; they are not supported transfers.
+- `DmaReadParams`: default 8 page-table slots (`regions * pagesPerRegion`, legacy
+  elaboration names only), max physical segment 4096B, physical IB capacity 1MiB.
+- `DmaSchedulerParams`: per-target capacity 8192B, chunk entries 2, `ageLimit=8`.
+  The aging threshold is an implementation default, not a measured latency SLA.
+- A consumer mask has 8 explicit lease bits. IDs/context/epoch remain typed 16b;
+  allocation generation is 32b and may not wrap/reuse an old value in a slot.
 
-## Source preview and scheduling
+## Configuration and traversal
 
-The ordering is **refill admission -> live source preview -> permit/RR accept
--> latched backend issue -> sink commits -> completion**. Admission stages
-stream, phase and the complete identity for one target; W1/W2 selection is
-explicit in that request. Admission does not automatically dispatch a segment.
+`ReadStreamConfig` still describes Input/W1/W2/Quant/Freq/NormSpill using
+`base + row*rowStride + pass*passStride + tile*tileStride + withinTile`.
+Row -> pass -> tile is the logical order. All addresses/strides/payloads are
+16B aligned. Tiles and final tails are positive 16B multiples up to 4096B.
 
-| Port | Contract |
+| Supply | Configuration |
 | --- | --- |
-| `nextReadRequest(target): Valid[ReadPlan]` | UB/WB/QB/FB/NB candidates are visible simultaneously before scheduling; includes source, identity, addresses, length, destination offset, fill and last metadata |
-| `sourceAvailable(0/1)` | DRAM/IB reservation is free for a new segment; independent of backend request.ready and OCM free credit |
-| `schedulePermit(target)` | Allows this cycle's candidate to participate in its source's RR; does not itself advance any state |
-| `acceptedPlan(source)` | Actual selected accept event and complete plan; the only issue-cursor advance event |
+| Input STREAM | rows=M, passes=required N/fusion passes, passStride=0, tile=K |
+| Input LOCAL_ROW_CACHE | passes normalized to 1, stopAtRowEnd; one unique row supplied per row event |
+| Weight STREAM | rows=M repeats, rowStride=0, passes=N groups, tile=K |
+| Weight LOCAL_WEIGHT_CACHE | rows normalized to 1; unique working set supplied once |
+| Dense/compact | normally 256B/16B tiles, but arbitrary 16B multiples (e.g. 144B) are legal |
+| Direct/aux streams | explicit base+offset, length, strides and repetitions; no inference from QB/FB CU units |
 
-Preview.valid is independent of permit and source occupancy. It is false while
-that target's previous segment is pending, at completion, or for invalid IB-only
-data (which takes the existing error path). A different source's busy or stalled
-backend request never hides a candidate. Multiple permits for one source still
-produce at most one accept. A prototype wrapper may tie all five permits high
-to reuse the source RR policy; an external scheduler must drive them explicitly.
-No demand/hungry/prefetch or OCM credit policy is added here.
+W1/W2 cursors are independent despite sharing WB. Fusion phase/stream is explicitly
+selected in each refill, with no physical-burst-count schedule or new UB replay.
+The cached fusion weight footprint is W1 unique bytes plus W2 unique bytes.
 
-Preview is a **live candidate**, not a stalled Decoupled descriptor or a cached
-source hint. Another refill's IB write commit can change its source, resolved
-address, segment size and last flags while preserving logical identity/location.
-Schedule using the current cycle's valid plan. A pipelined arbiter must revalidate
-the identity, source and full segment metadata (including canonical address,
-destination offset and length) against that current candidate before granting.
-With no accept and no other refill's coverage commit, observing preview or holding
-permits low leaves cursors, offsets and coverage unchanged and emits no backend
-request. `acceptedPlan` describes dispatched work and cannot replace preview.
+`tileStride == tileBytes` merges a continuous pass, including its short last
+tile. Pass length is computed at config; residual bytes and additions advance
+issue without a tile divider or per-tile combinational traversal. Strides,
+passes/repeats/rows, logical chunks/phases, canonical 4KiB boundaries, resident
+chunk boundaries and maxSegmentBytes split segments. Cursor advancement happens
+only at acceptedPlan, including IB hits and partial-tile chunk continuations.
+Zero-byte refill/config payloads are invalid and asserted, not zero-mask transfers.
 
-Once accepted, the source descriptor is latched through backend issue, all
-responses and mandatory sink commits. Lowering permit cannot stop/cancel it.
-The target's logical refill identity/destination reservation survives all segment
-continuations, including mixed-source ones. OCM capacity and chunk-entry
-reservation are the **upper admission layer's** responsibility: reserve once for
-the logical refill and let its continuations use that reservation. A full flag
-for *new* refills must not block an already admitted refill halfway through.
+`RefillRequest` adds a `logicalId` namespace to context/epoch/refill identity.
+The caller configures streams before submitting requests and does not overflow
+64b canonical traversal arithmetic. This is a typed integration API, not a new
+instruction encoding.
 
-## Mappings and fill-through
+## Page allocation, lookup and publication
 
-`mapping` installs/replaces a region slot with canonical and IB 4KiB-aligned
-bases, pageCount, contextId and epoch. The default prototype has two entries,
-four pages per entry; `DmaReadParams` changes these elaboration-time bounds.
-Separate slots support scattered regions. Physical IB regions must not alias;
-canonical regions in one context/epoch must not overlap. There is no replacement
-policy, TLB or instruction-level address translation.
+A slot owns an entire **4KiB physical page**, even for a 16B tail. No other chunk
+may be packed into its unused space. `IbPageMetadata` separates:
 
-Mapping **and** stream config writes are accepted only at `drained`: all approved
-refills, source reservations, return sinks and completion handshakes have finished.
-The caller must drain other users of the same IB before replacing a region.
-All mapping metadata used by approved requests remains fixed until completion.
-Updating a slot invalidates its coverage. No outside writer may change mapped IB
-storage without a drained mapping update to invalidate its coverage.
+- `canonicalStart` (16B aligned), `validBytes` (16..4096B), `ibPageBase` (4KiB aligned);
+- context, epoch, logicalId, allocation generation and layout;
+- writer kind (DRAM fill or output), DRAM backing readability, consumers and keepWeight.
 
-For an in-range address, IB address is `ibBase + canonical - canonicalBase`;
-the original page offset is preserved. Validity uses a per-page bitmap with one
-bit per 16B lane, including separate context/epoch mapping tags. When a candidate
-starts in committed data, a priority encoder splits at the first uncovered lane,
-yielding the maximal committed IB prefix. If the starting lane is invalid, the
-whole bounded candidate conservatively misses, even if later lanes are valid.
-Thus a page with only its first 512B committed supplies a 4KiB refill as IB 512B
-then DRAM 3584B, preserving one logical completion. Every lane of an IB segment
-must be committed. Repeated writes OR the same coverage bits and
-cannot make unfilled bytes valid. Empty pages, gaps and old epochs never hit.
+State additionally includes allocated/pageValid/writerOpen, unique 16B coverage
+and outstanding IB reader count. Lookup requires matching context/epoch/logicalId
+and an overflow-safe canonical range. Translation is
+`ibPageBase + canonicalAddress - canonicalStart`. All allocated physical pages
+are disjoint; same-identity canonical ranges cannot alias. Physical bounds and
+65b overflow checks reject invalid allocations.
 
-Out-of-region misses read DRAM and deliver only OCM data. In-region misses read
-DRAM and deliver both OCM and **actual** IB write data, starting with the first
-read. `fill` is a stable ready/valid port with identity, physical 64B word address,
-512b raw data and a four-bit 16B lane mask in the **original word lanes**.
-`fill.ready` acknowledges an actual durable write commit. A backend that queues
-writes must retain ready low until that particular write has committed; ready
-must be able to acknowledge the held valid beat without requiring an earlier
-ready/valid request transfer. This deliberately makes acceptance and commit one
-event. Coverage changes only on that event. Padding and unselected lanes must
-not be written. A discontinuous next segment translates its own canonical
-address; it does not append to the previous physical fill address.
+Coverage is completion tracking only. **There are no partial/prefix hits.** A
+validBytes=4096 allocation with 512B committed is entirely a miss. Repeated or
+out-of-order writes OR unique bits; total write byte counts cannot publish it.
+A complete validBytes=512 tail page can hit its 512B; unused physical bytes have
+no mapping or validity. A mixed refill across that complete tail and a nonresident
+range can still use IB 512B then DRAM 3584B.
 
-`ibOnly` permits only committed mapped data. An invalid/unmapped candidate
-returns an error completion; it never invents a DRAM source. This prototype
-populates coverage through this fill port, so externally preloaded IB data must
-first acquire coverage through a supported fill or a future explicit committed
-coverage-loading extension (no unverified valid-bit input is provided).
+For DRAM fill, pageValid is published only after coverage equals the declared
+range AND the raw beat's final derived write has committed. Even when its first
+write fills the last unique hole and the second only duplicates covered lanes,
+publication waits for the second ACK. The DRAM writer remains open until its
+source drains. For output, full coverage alone is insufficient: FinishWriter
+must also confirm the producer transaction/result stream has drained.
 
-## Backend ports and response adaptation
+Pages and logical refills are independent. Small 80B/976B refills can accumulate
+one page. Strided segments look up their canonical ranges independently; their
+logical refill total does not invent a contiguous page. A 4096B allocation at
+canonical 0x1010 uses one IB page even though the engine issues 4080B/16B DRAM
+segments. Physical segment last alone does not publish the page.
 
-Connect the future DRAM/TL IP at `engine.io.dram`. Connect `engine.io.ib` to
-`IbBurstReader.io.burst`, then attach SRAM at `wordRead` / `wordResponse`.
-Connect `engine.io.fill` to the IB write/commit adapter. `IbReadFillArbiter`
-provides a conservative single-port integration: connect its `read` to the
-burst reader's `wordRead`, its `fill` to the engine's fill, and its two backing
-outputs to the physical adapter. It grants at most one backing command per
-cycle, locks a stalled selection, and alternates when both request. A physically
-banked backend may replace it with bank-aware grants. The suite exercises both
-independent backing ports and this shared-port arbiter; it does not validate a
-specific physical banking implementation.
+## Control and operation handoff
 
-Both sources accept `ReadBurstRequest(plan)` with a **logical** 16B-aligned
-start address and positive 16B-multiple payload length. DRAM fetches:
+`pageCommand` is drained, one-at-a-time, with a held `pageResult` (`error==0`
+means success). Wrong expected context/epoch/logicalId/generation, unsafe lifetime,
+alias, range/overflow, layout and incomplete publication return explicit errors.
+No rejected command mutates page metadata/storage.
 
-```
-logicalEnd = address + payloadBytes
-fetchStart = alignDown(address, 64)
-fetchEnd   = alignUp(logicalEnd, 64)    // exclusive
-```
+| Operation | Contract |
+| --- | --- |
+| Allocate | Require old lifetime released, writer/readers drained, fresh larger generation. Clear coverage/valid; assign one writer. Output starts with no consumers/weight pin; DRAM fill requires readable backing. |
+| Release | Explicitly clear selected consumer lease bits and optionally the weight pin, after drain. Clearing one consumer does not release the others. |
+| FinishWriter | Output only; require full coverage and all producer durable results acknowledged. Close producer and publish. May finish a producer while a different page is being read; this is not a rebind. |
+| Rebind | Require valid completed data, no old consumers/readers, all output producers complete, same physical page, length, generation and compatible layout. Preserve data, coverage and pageValid while changing logical binding/new leases. |
+| AbortWriter | Explicitly abort an open unpublished writer; does not free any OCM occupancy. |
+| Invalidate | Require no live consumer, weight pin, reader or writer. Retire mapping/coverage; a new allocation still needs a larger generation. |
 
-SW guarantees readable backing for the entire expanded `[fetchStart,fetchEnd)`
-window. There is no added RTL security/permission check for its padding. This
-replaces the earlier no-over-read DRAM contract. The TL adapter must partition
-the window into the **largest supported naturally aligned power-of-two Gets**.
-The default mock supports 64..4096B Gets; a separate 128B-maximum profile verifies
-small backends. An aligned 4KiB segment is one Get returning 64 raw 64B beats.
-Get sizes are independent of bus beat size. Get boundaries never subdivide a
-raw word or create a logical last.
+Retained output B can become next input B without copy or DRAM refill. A is not
+reused as output until all old consumers release and delayed IB responses drain.
+A retained weight pin independently prohibits overwrite. Physical input/output
+partitions do not exist; these are allocation roles. Rebind never bumps generation
+or clears valid. New-data allocation does both. Late old producer requests are
+rejected before they reach the physical write port.
 
-`0x1030 + 32B` fetches `[0x1000,0x1080)`: two 64B raw words, each contributing
-16B to OCM with mask 0001. `0x1010 + 4096B` fetches `[0x1000,0x2040)`: 65 raw
-words contributing 48 + 63*64 + 16B. Its prefix masks are 0111, 63 times 1111,
-then 0001. The AG splits this at the page boundary into 4080B/16B plans; only
-the second plan ends the logical chunk. With the default profile these are
-4096B/64B Gets. IB's backing interface continues to read only selected valid
-lanes using `wordRead.laneMask`; DRAM's padding guarantee does not validate IB
-padding or give it committed coverage.
+The prototype uses conservative operation boundaries. Destructive control waits
+for engine reads and scheduler OCM chunks to drain and for producer ACK drain;
+rebind/reuse also checks producer completion. `engine.drained` by itself proves
+none of the producer completion conditions. Staged old consumers block release
+of their page; a held control request lets them drain instead of deadlocking new
+admission. Staged next-context producer waiters may remain while a completed
+unleased output is rebound. Configuration similarly drains staged work before
+replacing a stream. New ingress is held during control/config; no cancel exists.
 
-`ReadBurstResponse` carries latched request identity, raw aligned 512b data,
-payloadOffset, firstLane, laneCount and segmentLast. The adapter returns one
-response per raw word, whose valid range is its intersection with the logical
-payload. Only head/tail are partial; intervening words carry four lanes.
-payloadOffset advances by valid payload bytes, not padding. The engine asserts
-the full intersection size and contiguous offsets. `segmentLast` means the entire
-DMA backend segment, **not** TL Get last. Identity, contiguous offsets, exact
-length and last are checked by RTL assertions. Backends must hold all response
-fields stable while valid && !ready. Transport exceptions are not part of this
-prototype interface and must be handled before presenting a successful response.
+## Compact write and durable ACK contracts
 
-The OCM adapter moves firstLane to lane 0, zeroes inactive lanes, and emits only
-0001/0011/0111/1111. Raw lane 3's 16B becomes output lane 0 with mask 0001.
-OCM consumers append `popcount(mask)*16B`. They must not infer an offset from IB
-fill masks. IB fill retains canonical page offsets and original raw word lanes;
-expanded head/tail padding never reaches OCM, fill writes or coverage.
-`memoryContextId` aliases `identity.contextId` in the typed bundle
-(the complete identity also preserves target, epoch and refillId).
+A DRAM raw word contributes only its logical intersection. OCM receives compact
+low lanes and prefix mask 0001/0011/0111/1111. IB instead uses allocation-relative
+addresses. For 0x1010+4096B, data is stored at **0x8000..0x8fff**, not 0x8010.
+Fetch padding is never stored or counted in coverage/length/cursors/credit.
 
-DRAM and IB have separate issue reservations and return datapaths. Different
-targets may both accept a 64B beat in the same cycle (128B total); neither path
-uses a common return register. IB word reads are pipelined using a metadata FIFO.
-For fill-through, each response tracks OCM and IB sink acceptance independently;
-one sink may accept early without receiving duplicate data while the other
-stalls. OCM last marks its own final payload; `done` becomes valid only when all
-required OCM and IB commits finish. Completion is itself stable ready/valid and
-reserves the target until accepted. No global compute stall controls DMA.
+The compact writer removes raw firstLane, then places valid lanes at the IB
+address. A crossing raw beat emits two masked writes, tracking each once. OCM may
+accept first, or IB may commit first; raw response advances only after OCM and
+all derived writes complete. Data/mask/address/identity/generation stay stable
+while a write is stalled. IB replay returns the same logical byte sequence even
+when its raw beat boundaries differ from DRAM.
 
-## Running verification
+`IbFillWrite.ready` is the actual durable write ACK, not queue acceptance. The
+backend must be able to acknowledge a held valid write without needing an earlier
+ready/valid enqueue event. The port carries page slot + generation and request
+identity along with physical word address/data/mask. It is the unified DRAM-fill
+and producer write port. The physical writer arbiter locks a stalled command;
+DRAM fill and output can never own the same allocation simultaneously.
 
-```
-make dma-read-test RTL_SBT=sbt
-make dma-read-compile RTL_SBT=sbt
-make production-compile RTL_SBT=sbt
-make param-ocm-test RTL_SBT=sbt
+`producerWrite.ready` has a different, explicit meaning: capture one local
+`IbProducerWrite` request. `producerResult` is emitted only after all derived
+durable writes, or with error if validation rejects the request before storage.
+FinishWriter waits for these results to be acknowledged. Producer data is already
+compact prefix lanes at a 16B-aligned page-relative offset; this is a bounded
+commit/lifetime adapter, not a DRAM output DMA implementation.
+
+Aligned full-word fill remains a direct one-write-per-cycle path. This prototype
+uses two ACKed masked writes for a crossing beat rather than a cross-beat gather
+buffer. A single physical write port therefore needs two cycles for such a full
+raw beat. The unaligned 4096B example has 65 DRAM raw beats and 128 masked writes;
+the validation report records measured simulator cycles. No unaligned sustained
+64B/cycle or shared-port 128B/cycle claim is made. The independent, aligned profile
+counts actual simultaneous full-beat acceptance separately.
+
+## DRAM/TL and IB backend connections
+
+The logical request is address+payloadBytes. DRAM reads
+`[alignDown(address,64), alignUp(address+payloadBytes,64))`. SW guarantees readable
+backing for this expanded window; there is no extra padding permission checker.
+The TL mock partitions it into largest supported naturally aligned power-of-two
+Gets, default maximum 4096B, separately tested at maximum 128B. Each Get returns
+64B raw words. TL Get last, backend segmentLast, logical memoryChunkLast,
+memoryStreamLast, page publication, refillDone and operation completion differ.
+
+- Aligned 4096B: one segment, one default Get, 64 raw words.
+- 0x1010+4096B: 4080B/16B segments, 4096B/64B Gets, 65 words, valid OCM lengths
+  48 + 63*64 + 16 and masks 7 / 63*15 / 1.
+- 0x1030+32B: expanded [0x1000,0x1080), two words each with 16 valid bytes.
+- Maximum Get 128B: aligned 4096B still has one segment and 64 raw words, but 32 Gets.
+
+Attach real DRAM transport at `dram.request/response`. IB uses
+`IbBurstReader.burst`, `wordRead/wordResponse` and the unified `fill` commit port.
+`IbReadFillArbiter` optionally serializes all backing reads/writes for a shared
+physical port; it is distinct from source priority and the fill/output write
+arbiter. Bank-aware physical logic may replace it with the same held-grant and
+commit contract. Real TL IP, physical SRAM/ECC/banking and post-synthesis timing
+remain unverified integration work.
+
+## Admission, credit and source scheduling
+
+`DmaReadSystem` exposes five typed `requests`, `status`, `consume` and
+`discardCommit` ports plus memory/done, page control, producer, backend and debug
+ports. Controller names can be adapted to these types without editing controllers.
+
+The sequence is ingress staging -> **engine.refill.fire admission** -> live
+nextReadRequest -> source permit -> acceptedPlan -> backend -> sink commits/done.
+W1/W2/phase/context are preserved in the staged request. One target slot may hold
+the next pending request while its previous logical refill drains. Admission RR
+is fair across targets and never gated by a source being busy. Already active
+streams are excluded to preserve one cursor owner. An offered admission descriptor
+is irrevocable while engine ready is low; identity/data remain stable, and RR or
+credits do not move until its fire. Published producer readiness may not be revoked
+while such an offer is outstanding; destructive metadata control is fenced.
+
+New admission requires enabled, needsExternalSupply, producerReady, not-full,
+free >=4096B and a free chunk entry. The first tiled-row dependency can specify a
+required page mask and expected generations: ALL those pages must be published,
+writer-closed, leased and match the request identity. One page finishing does not
+make the whole producer row ready. Invalid IB-only is a separate explicit engine
+error; producer waiting is held before admission. Unpublished producer data with
+unreadable DRAM backing cannot silently fall back to DRAM.
+
+The scheduler is the sole byte/entry credit owner. `full` is an additional
+controller admission hold, not a second byte-reservation counter. An adapter must
+not subtract the same reservation in another free-space owner.
+
+| Event | Credit action |
+| --- | --- |
+| engine.refill.fire | Reserve 4096B and one chunk entry, even for a tail |
+| OCM valid && ready | Move actual payload bytes from reserved to buffered occupancy |
+| done valid && ready | Release unused reservation; enqueue completed/error chunk metadata; keep buffered bytes and the entry |
+| consume | Free only bytes of the oldest completed non-error entry; chunkLast releases its entry |
+| discardCommit | Confirm physical rollback of the oldest error entry with matching identity; then free its remaining occupancy/entry and clear context error |
+
+Example 16B tail: 4096B reserved -> 16B occupancy + 4080B reserve -> done releases
+4080B only -> consume frees the final 16B/entry. Completion backpressure preserves
+reservation/occupancy. Error data is never silently freed; error entries reject
+normal consume and block further admission until confirmed discard. Partial
+consume, reserve, data and completion accounting are combined without double
+subtraction. Full (<4096B free), hungry, enabled and needsExternalSupply changes
+do not stop an admitted continuation. Consumers here retire completed chunks;
+consumption before completion is conservatively outside this adapter profile.
+
+Source selection uses current live candidates, with sourceAvailable representing
+only the engine slot. Per source: aged candidates first; otherwise P0=demand or
+impending, then P1=hungry, then P2=valid supplied prefetch. Equal priority uses
+source RR. Age saturates at the parameter limit, increments only when another
+eligible candidate on its current source is ACTUALLY accepted, survives source
+changes and resets on accept/new logical admission. RR moves only on acceptedPlan.
+Source busy time is not a fairness latency bound. The scheduler never copies
+engine sourceBusy, response descriptors or dual-sink progress. Compute stall does
+not clock-enable or suppress any memory request/commit/done path.
+
+## Verification and history
+
+```sh
+make -j1 dma-read-test dma-read-compile RTL_SBT=sbt
+make -j1 dma-arbiter-test RTL_SBT=sbt
+sbt 'Test / compile'
 git diff --check
 ```
 
-The DMA suite uses address-dependent DRAM bytes, a byte-addressed IB backing
-store updated only on write commit, independently constructed logical byte
-traces, poison lanes, deterministic independent backpressure and timeouts.
-It includes alignment/tails, GEMM rewinds/strides, W1/W2 phase events, compact
-row-cache versus STREAM, linear auxiliary streams, fill/hit/epoch/partial-page
-cases, source transitions, IB-only errors, target reservation, concurrent
-DRAM/IB returns, large/small Get profiles, tile merging and five-target live
-preview/permit/accept checks. Results and any baseline failures are recorded
-in `reports/dma-read-validation.md` after execution.
+The new target explicitly compiles DmaRead_Test.scala (shared byte model),
+DmaReadScheduler_Test.scala and IbPageLifecycle_Test.scala, and runs the three
+new suite classes. The existing read target retains its AG/transport regressions.
+Expected bytes come from configurations, page specs and independent producer
+sequences, not DUT cursor/plan copies. The backing model commits actual masked
+writes and rejects uninitialized IB reads. Deterministic bubbles, poison,
+stability monitors, exactly-once scoreboards and bounded waits cover the paths.
+Idle don't-care data peeks are skipped; a previously stalled port is ALWAYS
+checked, even if valid is withdrawn.
+
+See [validation results](../reports/dma-read-validation.md) for commands, counts,
+negative protocol rejections, measured cases and the unrelated full-build limits.
+Current architecture sources: [Arbiter](https://app.notion.com/p/3eb397c48d6381e69b3af905613c424b),
+[AG](https://app.notion.com/p/3eb397c48d63812daf13e86e76e09cd3),
+[IB](https://app.notion.com/p/3db397c48d638142892afbdfe330e11e), latest agreement 2026-11-06.
+The archived v3/v2 partial-valid/offset-preserving policy is design history only.

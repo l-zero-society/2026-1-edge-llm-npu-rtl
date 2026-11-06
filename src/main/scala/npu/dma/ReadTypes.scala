@@ -17,10 +17,14 @@ object ReadSupplyMode {
   val LocalRowCache = 1
   val LocalWeightCache = 2
 }
-case class DmaReadParams(regions: Int = 2, pagesPerRegion: Int = 4, maxSegmentBytes: Int = 4096) {
+case class DmaReadParams(regions: Int = 2, pagesPerRegion: Int = 4, maxSegmentBytes: Int = 4096,
+                         ibCapacityBytes: BigInt = BigInt(1) << 20) {
   require(regions > 0 && pagesPerRegion > 0)
   require(maxSegmentBytes >= 16 && maxSegmentBytes <= 4096 && maxSegmentBytes % 16 == 0)
-  val regionBits: Int = math.max(1, log2Ceil(regions))
+  require(ibCapacityBytes >= 4096 && ibCapacityBytes % 4096 == 0 && ibCapacityBytes < (BigInt(1) << 64))
+  // Legacy elaboration parameters now size a flat physical-page table.
+  val cachePages: Int = regions * pagesPerRegion
+  val regionBits: Int = math.max(1, log2Ceil(cachePages))
 }
 
 /** Typed hardware contract, not an instruction/SW ABI. Iterate row -> pass -> tile.
@@ -52,6 +56,7 @@ class RefillRequest extends Bundle {
   val phase = UInt(8.W)
   val contextId = UInt(16.W)
   val epoch = UInt(16.W)
+  val logicalId = UInt(16.W)
   val refillId = UInt(16.W)
   val destinationOffset = UInt(32.W)
   val payloadBytes = UInt(13.W) // maximum logical chunk; row/stream end may shorten it
@@ -60,6 +65,7 @@ class ReadIdentity extends Bundle {
   val target = UInt(3.W)
   val contextId = UInt(16.W)
   val epoch = UInt(16.W)
+  val logicalId = UInt(16.W)
   val refillId = UInt(16.W)
 }
 class ReadPlan(p: DmaReadParams) extends Bundle {
@@ -76,6 +82,7 @@ class ReadPlan(p: DmaReadParams) extends Bundle {
   val fill = Bool()
   val fillAddress = UInt(64.W)
   val region = UInt(p.regionBits.W)
+  val generation = UInt(32.W)
 }
 /** address/payloadBytes describe the logical 16B-aligned payload (1..4096B,
   * with a positive multiple of 16 bytes; zero length is invalid).
@@ -117,27 +124,17 @@ class RefillDone extends Bundle {
   val committedBytes = UInt(13.W)
   val error = Bool() // IB-only range unavailable; no invented DRAM fallback
 }
-class IbRegion extends Bundle {
-  val valid = Bool()
-  val canonicalBase = UInt(64.W)
-  val ibBase = UInt(64.W)
-  val pageCount = UInt(32.W)
-  val contextId = UInt(16.W)
-  val epoch = UInt(16.W)
-}
-class IbMappingUpdate(p: DmaReadParams) extends Bundle {
-  val index = UInt(p.regionBits.W)
-  val mapping = new IbRegion
-}
 /** ready is a WRITE COMMIT acknowledgement. A backend with a request queue
   * must retain ready low until the write is durable/visible to later reads.
-  * Data and mask are in original physical 64B-word lanes, NOT compact OCM lanes.
+  * Data and mask are in COMPACT IB physical word lanes, after repacking.
   */
 class IbFillWrite extends Bundle {
   val identity = new ReadIdentity
   val wordAddress = UInt(64.W)
   val data = UInt(512.W)
   val laneMask = UInt(4.W)
+  val page = UInt(16.W)
+  val generation = UInt(32.W)
 }
 class IbWordRead extends Bundle {
   val wordAddress = UInt(64.W)

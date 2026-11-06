@@ -106,7 +106,7 @@ param-ocm-test:
 production-compile:
 	$(RTL_SBT) $(COMPUTE_SOURCES) compile
 
-.PHONY: dma-read-test dma-read-compile
+.PHONY: dma-read-test dma-read-compile dma-arbiter-test
 dma-read-test:
 	$(RTL_SBT) $(DMA_SOURCES) \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "DmaRead_Test.scala"))' \
@@ -114,6 +114,11 @@ dma-read-test:
 
 dma-read-compile:
 	$(RTL_SBT) $(DMA_SOURCES) compile
+
+dma-arbiter-test:
+	$(RTL_SBT) $(DMA_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "DmaReadScheduler_Test.scala", "IbPageLifecycle_Test.scala").contains(f.getName)))' \
+	  'testOnly npu.dma.DmaSourceSchedulerTest npu.dma.DmaReadArbiterTest npu.dma.IbPageLifecycleTest'
 
 zero-padder-test:
 	$(RTL_SBT) \

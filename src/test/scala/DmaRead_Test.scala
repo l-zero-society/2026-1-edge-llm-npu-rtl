@@ -10,73 +10,86 @@ import scala.collection.mutable
   * in the Scala testbench. No dependency on UB/WB/RF or Rocket Chip.
   */
 class DmaReadHarness(val p: DmaReadParams = DmaReadParams(pagesPerRegion = 2),
-                     sharedIbPort: Boolean = false) extends Module {
-  val io = IO(new Bundle {
-    val config = Flipped(Decoupled(new ReadStreamConfig))
-    val mapping = Flipped(Decoupled(new IbMappingUpdate(p)))
+                     sharedIbPort: Boolean = false, val scheduled: Boolean = false,
+                     val schedulerParams: DmaSchedulerParams = DmaSchedulerParams()) extends Module {
+  val io = IO(new DmaReadSystemIO(p, schedulerParams) {
     val refill = Flipped(Decoupled(new RefillRequest))
-    val dram = new ReadBurstPort(p)
-    val fill = Decoupled(new IbFillWrite)
-    val memory = Vec(ReadTarget.Count, Decoupled(new MemoryReadData))
-    val done = Vec(ReadTarget.Count, Decoupled(new RefillDone))
-    val acceptedPlan = Output(Vec(2, Valid(new ReadPlan(p))))
-    val nextReadRequest = Output(Vec(ReadTarget.Count, Valid(new ReadPlan(p))))
-    val sourceAvailable = Output(Vec(2, Bool()))
     val schedulePermit = Input(Vec(ReadTarget.Count, Bool()))
-    val drained = Output(Bool())
-    val wordRead = Decoupled(new IbWordRead)
-    val wordResponse = Flipped(Decoupled(UInt(512.W)))
   })
-  val engine = Module(new DmaReadEngine(p))
-  val ib = Module(new IbBurstReader(p))
-  engine.io.config <> io.config; engine.io.mapping <> io.mapping
-  engine.io.refill <> io.refill; io.dram <> engine.io.dram
-  io.memory <> engine.io.memory; io.done <> engine.io.done
-  io.acceptedPlan := engine.io.acceptedPlan; io.drained := engine.io.drained
-  io.nextReadRequest := engine.io.nextReadRequest
-  io.sourceAvailable := engine.io.sourceAvailable
-  engine.io.schedulePermit := io.schedulePermit
-  ib.io.burst <> engine.io.ib
-  if (sharedIbPort) {
-    val arbiter = Module(new IbReadFillArbiter)
-    arbiter.io.read <> ib.io.wordRead; arbiter.io.fill <> engine.io.fill
-    io.wordRead <> arbiter.io.backingRead; io.fill <> arbiter.io.backingFill
-    assert(!(io.wordRead.valid && io.fill.valid), "single IB port collision")
+  if (scheduled) {
+    val system = Module(new DmaReadSystem(p, schedulerParams, sharedIbPort))
+    for ((name, port) <- system.io.elements) port <> io.elements(name)
+    io.refill.ready := false.B
   } else {
-    io.wordRead <> ib.io.wordRead; io.fill <> engine.io.fill
+    val engine = Module(new DmaReadEngine(p))
+    val ib = Module(new IbBurstReader(p))
+    engine.io.config <> io.config; engine.io.refill <> io.refill
+    engine.io.pageCommand <> io.pageCommand; io.pageResult <> engine.io.pageResult
+    engine.io.producerWrite <> io.producerWrite; io.producerResult <> engine.io.producerResult
+    io.pages := engine.io.pages; io.writersDrained := engine.io.writersDrained
+    engine.io.controlDrained := true.B
+    io.dram <> engine.io.dram; io.memory <> engine.io.memory; io.done <> engine.io.done
+    io.acceptedPlan := engine.io.acceptedPlan; io.nextReadRequest := engine.io.nextReadRequest
+    io.sourceAvailable := engine.io.sourceAvailable; engine.io.schedulePermit := io.schedulePermit
+    io.permits := io.schedulePermit
+    io.admitted.valid := engine.io.refill.fire; io.admitted.bits := engine.io.refill.bits
+    io.drained := engine.io.drained && engine.io.writersDrained
+    for (t <- 0 until ReadTarget.Count) {
+      io.requests(t).ready := false.B; io.consume(t).ready := false.B; io.discardCommit(t).ready := false.B
+      io.credit(t) := 0.U.asTypeOf(new DmaCreditState(schedulerParams)); io.age(t) := 0.U
+    }
+    ib.io.burst <> engine.io.ib
+    ib.io.wordResponse <> io.wordResponse
+    if (sharedIbPort) {
+      val arbiter = Module(new IbReadFillArbiter)
+      arbiter.io.read <> ib.io.wordRead; arbiter.io.fill <> engine.io.fill
+      io.wordRead <> arbiter.io.backingRead; io.fill <> arbiter.io.backingFill
+      assert(!(io.wordRead.valid && io.fill.valid))
+    } else {
+      io.wordRead <> ib.io.wordRead; io.fill <> engine.io.fill
+    }
   }
-  ib.io.wordResponse <> io.wordResponse
 }
 
-class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
-  behavior of "DMA read path"
+object DmaReadTestModel {
 
   // Address-dependent bytes, independent of the DUT traversal/source resolver.
-  private def dramByte(a: BigInt): Int = ((a * 29 + (a >> 8) * 17 + (a >> 12) * 11 + 7) & 255).toInt
-  private def expected(addresses: Seq[BigInt]): Vector[Int] = addresses.map(dramByte).toVector
-  private def span(a: BigInt, n: Int): Vector[BigInt] = Vector.tabulate(n)(a + _)
-  private case class Id(target: Int, context: Int, epoch: Int, refill: Int)
-  private case class Plan(id: Id, stream: Int, phase: Int, dest: BigInt, canonical: BigInt,
+  def dramByte(a: BigInt): Int = ((a * 29 + (a >> 8) * 17 + (a >> 12) * 11 + 7) & 255).toInt
+  def expected(addresses: Seq[BigInt]): Vector[Int] = addresses.map(dramByte).toVector
+  def span(a: BigInt, n: Int): Vector[BigInt] = Vector.tabulate(n)(a + _)
+  case class Id(target: Int, context: Int, epoch: Int, refill: Int, logical: Int = 1)
+  case class Plan(id: Id, stream: Int, phase: Int, dest: BigInt, canonical: BigInt,
                           address: BigInt, bytes: Int, ib: Boolean, fill: Boolean,
                           chunkLast: Boolean, streamLast: Boolean)
-  private case class Beat(id: Id, data: BigInt, offset: Int, first: Int, lanes: Int, last: Boolean)
-  private case class Delivery(id: Id, dest: BigInt, bytes: Vector[Int], mask: Int,
+  case class Beat(id: Id, data: BigInt, offset: Int, first: Int, lanes: Int, last: Boolean)
+  case class Delivery(id: Id, dest: BigInt, bytes: Vector[Int], mask: Int,
                               chunkLast: Boolean, streamLast: Boolean)
-  private case class Done(id: Id, bytes: Int, error: Boolean)
-  private case class Config(stream: Int = ReadStream.Input, base: BigInt = 0x1000,
+  case class Done(id: Id, bytes: Int, error: Boolean)
+  case class PageSpec(canonical: BigInt = 0x1000, physical: BigInt = 0x8000, bytes: Int = 4096,
+                      context: Int = 1, epoch: Int = 1, logical: Int = 1, generation: Int = 1,
+                      writer: Int = IbWriter.DramFill, consumers: Int = 1, keepWeight: Boolean = false,
+                      layout: Int = 1, dramReadable: Boolean = true)
+  case class Config(stream: Int = ReadStream.Input, base: BigInt = 0x1000,
                             rows: Int = 1, passes: Int = 1, tiles: Int = 1,
                             rowStride: BigInt = 0, passStride: BigInt = 0,
                             tileStride: BigInt = 256, tileBytes: Int = 256, tail: Int = 256,
                             rowBoundary: Boolean = false, ibOnly: Boolean = false,
                             mode: Int = ReadSupplyMode.Stream)
 
-  private class Sim(val d: DmaReadHarness, val stalls: Boolean = true, val maxGetBytes: Int = 4096) {
+  class Sim(val d: DmaReadHarness, val stalls: Boolean = true, val maxGetBytes: Int = 4096) {
     require(maxGetBytes >= 64 && maxGetBytes <= 4096 && (maxGetBytes & (maxGetBytes - 1)) == 0)
     var cycle = 0
     var fillAllow = true
     var ocmAllow = true
     var dramAllow = true
     var backingAllow = true
+    var doneAllow = true
+    var producerResultAllow = true
+    val ocmAllowed = Array.fill(ReadTarget.Count)(true)
+    val allocations = mutable.Map.empty[Int, PageSpec]
+    val admissions = mutable.ArrayBuffer.empty[Id]
+    val producerResults = mutable.ArrayBuffer.empty[(Id, Boolean)]
+    val ibReads = mutable.ArrayBuffer.empty[(BigInt, Int)]
     val ib = mutable.Map.empty[BigInt, Int]
     val plans = mutable.ArrayBuffer.empty[Plan]
     val dramRequests = mutable.ArrayBuffer.empty[Plan]
@@ -87,7 +100,9 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
     val deliveries = mutable.ArrayBuffer.empty[Delivery]
     val dones = mutable.ArrayBuffer.empty[Done]
     val writes = mutable.ArrayBuffer.empty[(Id, BigInt, Int)]
+    val writeBeats = mutable.ArrayBuffer.empty[(Id, BigInt, Int)]
     var simultaneousFull = 0
+    var simultaneousAccept = 0
     var consecutiveFull = 0
     private var previousFull = false
     private val dramQueue = mutable.Queue.empty[(Int, Beat)]
@@ -96,29 +111,45 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
     private var heldBacking = Option.empty[BigInt]
     private val heldOutputs = mutable.Map.empty[String, Seq[BigInt]]
 
-    d.io.config.valid.poke(false.B); d.io.mapping.valid.poke(false.B)
+    d.io.config.valid.poke(false.B); d.io.pageCommand.valid.poke(false.B)
     d.io.refill.valid.poke(false.B)
+    d.io.producerWrite.valid.poke(false.B); d.io.producerResult.ready.poke(true.B)
+    d.io.pageResult.ready.poke(true.B); d.io.computeStall.poke(false.B)
     d.io.dram.response.valid.poke(false.B); d.io.wordResponse.valid.poke(false.B)
     d.io.dram.request.ready.poke(false.B); d.io.fill.ready.poke(false.B)
     d.io.wordRead.ready.poke(false.B)
     for (t <- 0 until ReadTarget.Count) {
       d.io.memory(t).ready.poke(false.B); d.io.done(t).ready.poke(false.B)
       d.io.schedulePermit(t).poke(true.B)
+      d.io.requests(t).valid.poke(false.B); d.io.consume(t).valid.poke(false.B)
+      d.io.discardCommit(t).valid.poke(false.B)
+      val status = d.io.status(t)
+      status.enabled.poke(true.B); status.producerReady.poke(true.B); status.needsExternalSupply.poke(true.B)
+      status.demand.poke(false.B); status.impending.poke(false.B); status.hungry.poke(true.B); status.full.poke(false.B)
+      status.requiredPages.poke(0.U)
+      for (i <- 0 until d.p.cachePages) status.requiredGenerations(i).poke(0.U)
     }
     def b(x: Bool): Boolean = x.peek().litToBoolean
     def u(x: UInt): BigInt = x.peek().litValue
-    def identity(x: ReadIdentity): Id = Id(u(x.target).toInt, u(x.contextId).toInt, u(x.epoch).toInt, u(x.refillId).toInt)
+    def identity(x: ReadIdentity): Id = Id(u(x.target).toInt, u(x.contextId).toInt, u(x.epoch).toInt, u(x.refillId).toInt, u(x.logicalId).toInt)
     def plan(x: ReadPlan): Plan = Plan(identity(x.identity), u(x.stream).toInt, u(x.phase).toInt,
       u(x.destinationOffset), u(x.canonicalAddress), u(x.address), u(x.payloadBytes).toInt,
       b(x.sourceIB), b(x.fill), b(x.chunkLast), b(x.streamLast))
-    private def idPoke(x: ReadIdentity, id: Id): Unit = {
+    def idPoke(x: ReadIdentity, id: Id): Unit = {
       x.target.poke(id.target.U); x.contextId.poke(id.context.U)
-      x.epoch.poke(id.epoch.U); x.refillId.poke(id.refill.U)
+      x.epoch.poke(id.epoch.U); x.refillId.poke(id.refill.U); x.logicalId.poke(id.logical.U)
     }
-    private def idSnapshot(id: Id): Seq[BigInt] = Seq(id.target, id.context, id.epoch, id.refill).map(BigInt(_))
+    private def idSnapshot(id: Id): Seq[BigInt] = Seq(id.target, id.context, id.epoch, id.refill, id.logical).map(BigInt(_))
     private def stability(key: String, valid: Boolean, ready: Boolean, value: Seq[BigInt]): Unit = {
       heldOutputs.get(key).foreach(old => assert(valid && old == value, s"unstable $key at cycle $cycle"))
       if (valid && !ready) heldOutputs(key) = value else heldOutputs.remove(key)
+    }
+    // Idle bits are don't-care. Still inspect a previously stalled port even
+    // if valid drops, so stability/drop checks are unchanged while avoiding
+    // hundreds of unused simulator peeks on the other four targets each cycle.
+    private def watch(key: String, valid: Bool, ready: Bool)(value: => Seq[BigInt]): Unit = {
+      val v = b(valid)
+      if (v || heldOutputs.contains(key)) stability(key, v, b(ready), value)
     }
     // Fetch a 64B-expanded readable backing window. Get size and raw beat size
     // are independent: even a 4KiB Get emits ordered 64B words, not one beat.
@@ -165,9 +196,10 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       d.io.wordRead.ready.poke((backingAllow && (!stalls || cycle % 7 != 2)).B)
       d.io.fill.ready.poke((fillAllow && (!stalls || cycle % 6 >= 3)).B)
       for (t <- 0 until ReadTarget.Count) {
-        d.io.memory(t).ready.poke((ocmAllow && (!stalls || (cycle + t) % 5 < 3)).B)
-        d.io.done(t).ready.poke((!stalls || cycle % 4 == 0).B)
+        d.io.memory(t).ready.poke((ocmAllow && ocmAllowed(t) && (!stalls || (cycle + t) % 5 < 3)).B)
+        d.io.done(t).ready.poke((doneAllow && (!stalls || cycle % 4 == 0)).B)
       }
+      d.io.producerResult.ready.poke(producerResultAllow.B)
       if (heldDram.isEmpty && dramQueue.headOption.exists(_._1 <= cycle) && (!stalls || cycle % 4 != 0)) {
         heldDram = Some(dramQueue.dequeue()._2)
       }
@@ -184,19 +216,31 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       d.io.wordResponse.valid.poke(heldBacking.nonEmpty.B)
       heldBacking.foreach(v => d.io.wordResponse.bits.poke(v.U))
 
+      if (b(d.io.admitted.valid)) {
+        val r = d.io.admitted.bits
+        admissions += Id(u(r.target).toInt, u(r.contextId).toInt, u(r.epoch).toInt, u(r.refillId).toInt, u(r.logicalId).toInt)
+      }
       val dramReq = d.io.dram.request
-      val rp = plan(dramReq.bits.plan)
-      stability("dramRequest", b(dramReq.valid), b(dramReq.ready),
-        idSnapshot(rp.id) ++ Seq(rp.address, rp.bytes, rp.dest, rp.canonical, rp.phase, rp.stream,
-          if (rp.fill) BigInt(1) else BigInt(0), if (rp.ib) BigInt(1) else BigInt(0),
-          if (rp.chunkLast) BigInt(1) else BigInt(0), if (rp.streamLast) BigInt(1) else BigInt(0),
-          u(dramReq.bits.plan.fillAddress), u(dramReq.bits.plan.region)))
-      if (b(dramReq.valid) && b(dramReq.ready)) { dramRequests += rp; enqueueDram(rp) }
+      watch("producerResult", d.io.producerResult.valid, d.io.producerResult.ready)(
+        idSnapshot(identity(d.io.producerResult.bits.identity)) ++
+          Seq(if (b(d.io.producerResult.bits.error)) BigInt(1) else BigInt(0)))
+      if (b(d.io.producerResult.valid) && b(d.io.producerResult.ready))
+        producerResults += ((identity(d.io.producerResult.bits.identity), b(d.io.producerResult.bits.error)))
+      if (b(dramReq.valid) || heldOutputs.contains("dramRequest")) {
+        val rp = plan(dramReq.bits.plan)
+        stability("dramRequest", b(dramReq.valid), b(dramReq.ready),
+          idSnapshot(rp.id) ++ Seq(rp.address, rp.bytes, rp.dest, rp.canonical, rp.phase, rp.stream,
+            if (rp.fill) BigInt(1) else BigInt(0), if (rp.ib) BigInt(1) else BigInt(0),
+            if (rp.chunkLast) BigInt(1) else BigInt(0), if (rp.streamLast) BigInt(1) else BigInt(0),
+            u(dramReq.bits.plan.fillAddress), u(dramReq.bits.plan.region), u(dramReq.bits.plan.generation)))
+        if (b(dramReq.valid) && b(dramReq.ready)) { dramRequests += rp; enqueueDram(rp) }
+      }
       val wr = d.io.wordRead
-      stability("ibWord", b(wr.valid), b(wr.ready), Seq(u(wr.bits.wordAddress), u(wr.bits.laneMask)))
+      watch("ibWord", wr.valid, wr.ready)(Seq(u(wr.bits.wordAddress), u(wr.bits.laneMask)))
       if (b(wr.valid) && b(wr.ready)) {
         val a = u(wr.bits.wordAddress); val mask = u(wr.bits.laneMask).toInt
         assert(a % 64 == 0 && mask != 0)
+        ibReads += ((a, mask))
         val raw = (0 until 64).foldLeft(BigInt(0)) { (v, i) =>
           val value = if ((mask & (1 << (i / 16))) != 0) {
             assert(ib.contains(a + i), s"read of uncommitted IB byte ${a + i}")
@@ -207,12 +251,13 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
         backingQueue.enqueue((cycle + (if (stalls) 2 else 1), raw))
       }
       val fill = d.io.fill
-      val fid = identity(fill.bits.identity)
-      stability("fill", b(fill.valid), b(fill.ready),
-        idSnapshot(fid) ++ Seq(u(fill.bits.wordAddress), u(fill.bits.data), u(fill.bits.laneMask)))
+      watch("fill", fill.valid, fill.ready)(idSnapshot(identity(fill.bits.identity)) ++
+        Seq(u(fill.bits.wordAddress), u(fill.bits.data), u(fill.bits.laneMask), u(fill.bits.page), u(fill.bits.generation)))
       if (b(fill.valid) && b(fill.ready)) {
+        val fid = identity(fill.bits.identity)
         val a = u(fill.bits.wordAddress); val mask = u(fill.bits.laneMask).toInt
         val raw = u(fill.bits.data)
+        writeBeats += ((fid, a, mask))
         for (i <- 0 until 64 if (mask & (1 << (i / 16))) != 0) {
           ib(a + i) = ((raw >> (8 * i)) & 255).toInt
           writes += ((fid, a + i, ib(a + i)))
@@ -221,12 +266,12 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       var fullCount = 0
       for (t <- 0 until ReadTarget.Count) {
         val m = d.io.memory(t); val x = m.bits
-        val id = identity(x.identity)
-        stability(s"memory$t", b(m.valid), b(m.ready), idSnapshot(id) ++
+        watch(s"memory$t", m.valid, m.ready)(idSnapshot(identity(x.identity)) ++
           Seq(u(x.destinationOffset), u(x.memoryData), u(x.memoryLaneValidMask),
             if (b(x.memoryChunkLast)) BigInt(1) else BigInt(0),
             if (b(x.memoryStreamLast)) BigInt(1) else BigInt(0)))
         if (b(m.valid) && b(m.ready)) {
+          val id = identity(x.identity)
           val mask = u(x.memoryLaneValidMask).toInt
           assert(Set(1, 3, 7, 15).contains(mask))
           val n = Integer.bitCount(mask) * 16
@@ -237,14 +282,14 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
           if (mask == 15) fullCount += 1
         }
         val done = d.io.done(t)
-        val doneId = identity(done.bits.identity)
-        stability(s"done$t", b(done.valid), b(done.ready), idSnapshot(doneId) ++
+        watch(s"done$t", done.valid, done.ready)(idSnapshot(identity(done.bits.identity)) ++
           Seq(u(done.bits.committedBytes), if (b(done.bits.error)) BigInt(1) else BigInt(0)))
-        if (b(done.valid) && b(done.ready)) dones += Done(doneId, u(done.bits.committedBytes).toInt, b(done.bits.error))
+        if (b(done.valid) && b(done.ready)) dones += Done(identity(done.bits.identity), u(done.bits.committedBytes).toInt, b(done.bits.error))
       }
       if (fullCount == 2) simultaneousFull += 1
       if (fullCount > 0 && previousFull) consecutiveFull += 1
       previousFull = fullCount > 0
+      if ((0 until 2).forall(s => b(d.io.acceptedPlan(s).valid))) simultaneousAccept += 1
       for (s <- 0 until 2 if b(d.io.acceptedPlan(s).valid)) plans += plan(d.io.acceptedPlan(s).bits)
       if (heldDram.nonEmpty && b(d.io.dram.response.ready)) heldDram = None
       if (heldBacking.nonEmpty && b(d.io.wordResponse.ready)) heldBacking = None
@@ -265,39 +310,106 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       d.io.config.valid.poke(true.B); waitFor(b(d.io.config.ready)); tick()
       d.io.config.valid.poke(false.B)
     }
+    def pageCommand(op: Int, index: Int, replacement: PageSpec = PageSpec(),
+                    expected: Option[PageSpec] = None, release: Int = 255,
+                    releaseWeight: Boolean = true): Int = {
+      val old = expected.orElse(allocations.get(index)).getOrElse(PageSpec(generation = 0, context = 0, epoch = 0, logical = 0))
+      val x = d.io.pageCommand.bits
+      x.op.poke(op.U); x.page.poke(index.U)
+      x.expectedContext.poke(old.context.U); x.expectedEpoch.poke(old.epoch.U)
+      x.expectedLogicalId.poke(old.logical.U); x.expectedGeneration.poke(old.generation.U)
+      x.releaseConsumers.poke(release.U); x.releaseWeight.poke(releaseWeight.B)
+      val m = x.replacement; val c = replacement
+      m.canonicalStart.poke(c.canonical.U); m.validBytes.poke(c.bytes.U); m.ibPageBase.poke(c.physical.U)
+      m.contextId.poke(c.context.U); m.epoch.poke(c.epoch.U); m.logicalId.poke(c.logical.U)
+      m.generation.poke(c.generation.U); m.layout.poke(c.layout.U); m.writer.poke(c.writer.U)
+      m.dramReadable.poke(c.dramReadable.B); m.consumers.poke(c.consumers.U); m.keepWeight.poke(c.keepWeight.B)
+      d.io.pageCommand.valid.poke(true.B); waitFor(b(d.io.pageCommand.ready)); tick()
+      d.io.pageCommand.valid.poke(false.B)
+      waitFor(b(d.io.pageResult.valid)); val error = u(d.io.pageResult.bits.error).toInt
+      tick()
+      if (error == 0) {
+        if (op == IbPageOp.Allocate || op == IbPageOp.Rebind) allocations(index) = replacement
+        if (op == IbPageOp.Release) allocations(index) = old.copy(consumers = old.consumers & ~release,
+          keepWeight = old.keepWeight && !releaseWeight)
+      }
+      error
+    }
     def map(index: Int = 0, canonical: BigInt = 0x1000, physical: BigInt = 0x8000,
-            pages: Int = 2, context: Int = 1, epoch: Int = 1): Unit = {
-      val x = d.io.mapping.bits
-      x.index.poke(index.U); x.mapping.valid.poke(true.B)
-      x.mapping.canonicalBase.poke(canonical.U); x.mapping.ibBase.poke(physical.U)
-      x.mapping.pageCount.poke(pages.U); x.mapping.contextId.poke(context.U); x.mapping.epoch.poke(epoch.U)
-      d.io.mapping.valid.poke(true.B); waitFor(b(d.io.mapping.ready)); tick()
-      d.io.mapping.valid.poke(false.B)
+            pages: Int = 1, context: Int = 1, epoch: Int = 1, bytes: Int = 4096): Unit = {
+      for (i <- 0 until pages) {
+        val slot = index + i
+        if (b(d.io.pages(slot).allocated)) {
+          if (b(d.io.pages(slot).writerOpen) && !b(d.io.pages(slot).pageValid))
+            assert(pageCommand(IbPageOp.AbortWriter, slot) == 0)
+          assert(pageCommand(IbPageOp.Release, slot) == 0)
+        }
+        val generation = allocations.get(slot).map(_.generation + 1).getOrElse(1)
+        assert(pageCommand(IbPageOp.Allocate, slot, PageSpec(canonical + i * 4096,
+          physical + i * 4096, bytes, context, epoch, generation = generation)) == 0)
+      }
+    }
+    def offerProducer(page: Int, offset: Int, data: BigInt, lanes: Int, id: Id,
+                      generation: Int = -1): Unit = {
+      val x = d.io.producerWrite.bits
+      x.page.poke(page.U); x.offset.poke(offset.U); x.data.poke(data.U); x.laneCount.poke(lanes.U)
+      x.generation.poke((if (generation < 0) allocations(page).generation else generation).U)
+      idPoke(x.identity, id)
+      d.io.producerWrite.valid.poke(true.B); waitFor(b(d.io.producerWrite.ready)); tick()
+      d.io.producerWrite.valid.poke(false.B)
+    }
+    def producerResult(): Boolean = {
+      waitFor(b(d.io.producerResult.valid))
+      val error = b(d.io.producerResult.bits.error)
+      tick(); error
+    }
+    def outputWrite(page: Int, offset: Int, data: BigInt, lanes: Int, id: Id,
+                    generation: Int = -1): Boolean = {
+      offerProducer(page, offset, data, lanes, id, generation); producerResult()
+    }
+    def consume(id: Id, bytes: Int, last: Boolean = true): Unit = {
+      val x = d.io.consume(id.target)
+      idPoke(x.bits.identity, id); x.bits.bytes.poke(bytes.U); x.bits.chunkLast.poke(last.B)
+      x.valid.poke(true.B); waitFor(b(x.ready)); tick(); x.valid.poke(false.B)
+    }
+    def discard(id: Id): Unit = {
+      val x = d.io.discardCommit(id.target)
+      idPoke(x.bits, id); x.valid.poke(true.B); waitFor(b(x.ready)); tick(); x.valid.poke(false.B)
     }
     def issue(stream: Int = 0, target: Int = 0, bytes: Int = 256, refill: Int = 1,
-              context: Int = 1, epoch: Int = 1, phase: Int = 0, dest: Int = 0): Unit = {
-      val x = d.io.refill.bits
+              context: Int = 1, epoch: Int = 1, phase: Int = 0, dest: Int = 0, logical: Int = 1): Unit = {
+      val port = if (d.scheduled) d.io.requests(target) else d.io.refill
+      val x = port.bits
       x.stream.poke(stream.U); x.target.poke(target.U); x.payloadBytes.poke(bytes.U)
       x.refillId.poke(refill.U); x.contextId.poke(context.U); x.epoch.poke(epoch.U)
-      x.phase.poke(phase.U); x.destinationOffset.poke(dest.U)
-      d.io.refill.valid.poke(true.B); waitFor(b(d.io.refill.ready)); tick()
-      d.io.refill.valid.poke(false.B)
+      x.phase.poke(phase.U); x.destinationOffset.poke(dest.U); x.logicalId.poke(logical.U)
+      port.valid.poke(true.B); waitFor(b(port.ready)); tick()
+      port.valid.poke(false.B)
     }
     def finish(refill: Int): Done = {
       waitFor(dones.exists(_.id.refill == refill))
       dones.find(_.id.refill == refill).get
     }
     def check(refill: Int, addresses: Seq[BigInt], dest: Int = 0, streamLast: Boolean = true): Unit = {
+      checkBytes(refill, expected(addresses), dest, streamLast)
+    }
+    def checkBytes(refill: Int, expectedBytes: Seq[Int], dest: Int = 0, streamLast: Boolean = true): Unit = {
       val done = finish(refill)
-      assert(!done.error && done.bytes == addresses.size)
+      assert(!done.error && done.bytes == expectedBytes.size)
       val ds = deliveries.filter(_.id.refill == refill)
-      assert(ds.flatMap(_.bytes).toVector == expected(addresses), s"byte trace mismatch in refill $refill")
+      assert(ds.flatMap(_.bytes).toVector == expectedBytes.toVector, s"byte trace mismatch in refill $refill")
       assert(ds.count(_.chunkLast) == 1 && ds.last.chunkLast, s"logical last mismatch in refill $refill")
       assert(ds.count(_.streamLast) == (if (streamLast) 1 else 0))
       var offset = dest
       for (x <- ds) { assert(x.dest == offset); offset += x.bytes.size }
     }
   }
+
+}
+
+class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
+  import DmaReadTestModel._
+  behavior of "DMA read path"
 
   it should "align expanded DRAM words and IB lanes with poisoned padding and exact logical bytes" in {
     test(new DmaReadHarness) { d =>
@@ -320,7 +432,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       assert(plans.map(_.bytes).toSeq == Seq(16, 128))
       assert(s.writes.isEmpty)
       // Repeat the alignment matrix through the production IB word/lane reader.
-      s.map()
+      s.map(bytes = 256)
       s.configure(Config())
       s.issue(bytes = 256, refill = 150); s.check(150, span(0x1000, 256))
       val dramBeforeHits = s.dramRequests.size
@@ -413,7 +525,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   it should "commit real fill bytes before hits and preserve gaps partial pages and epochs" in {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d)
-      s.map()
+      s.map(canonical = 0x1030, bytes = 32)
       def request(id: Int, a: BigInt, n: Int, epoch: Int = 1): Unit = {
         s.configure(Config(base = a, tileBytes = n, tail = n))
         s.issue(bytes = n, refill = id, epoch = epoch)
@@ -429,17 +541,18 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       s.issue(stream = 1, target = 1, bytes = 32, refill = 90)
       assert(s.finish(90).error) // another target cannot hit the uncommitted candidate
       assert(s.plans.count(_.id.refill == 90) == 0)
-      d.io.mapping.valid.poke(true.B)
-      d.io.mapping.ready.expect(false.B) // old readers pin the mapping through commit
-      d.io.mapping.valid.poke(false.B)
+      d.io.pageCommand.valid.poke(true.B)
+      d.io.pageCommand.ready.expect(false.B) // old readers pin the mapping through commit
+      d.io.pageCommand.valid.poke(false.B)
       s.fillAllow = true; s.check(1, span(0x1030, 32))
-      assert(s.writes.map(_._2).toVector == span(0x8030, 32))
-      assert(s.ib.keySet.toSet == span(0x8030, 32).toSet)
+      assert(s.writes.map(_._2).toVector == span(0x8000, 32))
+      assert(s.ib.keySet.toSet == span(0x8000, 32).toSet)
       val requestsBefore = s.dramRequests.size
       request(2, 0x1030, 32)
       assert(s.dramRequests.size == requestsBefore && s.plans.last.ib)
       request(3, 0x1020, 48) // partially covered candidate conservatively misses
       assert(s.dramRequests.size > requestsBefore)
+      s.map(index = 1, canonical = 0x1100, physical = 0x9000, bytes = 16)
       request(4, 0x1100, 16) // same page, still invalid
       assert(!s.plans.last.ib)
       request(5, 0x1100, 16)
@@ -447,7 +560,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       val fillsBefore = s.writes.size
       request(6, 0x1030, 32, epoch = 2) // stale epoch cannot hit/fill old mapping
       assert(!s.plans.last.ib && s.writes.size == fillsBefore)
-      s.map(epoch = 2) // drained replacement invalidates all coverage
+      s.map(canonical = 0x1030, bytes = 32, epoch = 2) // drained replacement invalidates all coverage
       request(7, 0x1030, 32, epoch = 2)
       assert(!s.plans.last.ib && s.writes.size == fillsBefore + 32)
       request(8, 0x1030, 32, epoch = 2)
@@ -458,7 +571,8 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   it should "split hit miss and mapping boundaries without early chunk last or filling padding" in {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d)
-      s.map(pages = 1)
+      s.map(canonical = 0x1ff0, bytes = 16)
+      s.map(index = 1, canonical = 0x1000, physical = 0x9000, bytes = 16)
       s.configure(Config(base = 0x1ff0, tileBytes = 16, tail = 16))
       s.issue(bytes = 16, refill = 1); s.check(1, span(0x1ff0, 16))
       s.configure(Config(base = 0x1ff0, tileBytes = 48, tail = 48))
@@ -477,14 +591,15 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       s.issue(bytes = 16, refill = 5); s.check(5, span(0x1010, 16))
       assert(!s.plans.last.ib)
       // A second scattered region retains its own physical translation/coverage.
-      s.map(index = 1, canonical = 0x5000, physical = 0xc000)
+      s.map(index = 2, canonical = 0x5ff0, physical = 0xc000, bytes = 16)
+      s.map(index = 3, canonical = 0x6030, physical = 0xd000, bytes = 16)
       s.configure(Config(base = 0x5ff0, tiles = 2, tileStride = 64, tileBytes = 16, tail = 16))
       s.issue(bytes = 32, refill = 6)
       s.check(6, span(0x5ff0, 16) ++ span(0x6030, 16))
-      assert(s.writes.filter(_._1.refill == 6).map(_._2).toVector == span(0xcff0, 16) ++ span(0xd030, 16))
+      assert(s.writes.filter(_._1.refill == 6).map(_._2).toVector == span(0xc000, 16) ++ span(0xd000, 16))
       s.configure(Config(base = 0x6030, tileBytes = 16, tail = 16))
       s.issue(bytes = 16, refill = 7); s.check(7, span(0x6030, 16))
-      assert(s.plans.last.ib && s.plans.last.address == 0xd030)
+      assert(s.plans.last.ib && s.plans.last.address == 0xd000)
       s.configure(Config(base = 0x6000, tileBytes = 16, tail = 16))
       s.issue(bytes = 16, refill = 8); s.check(8, span(0x6000, 16))
       assert(!s.plans.last.ib) // page-one gap was not appended/filled
@@ -494,7 +609,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   it should "reject invalid IB only data without a fabricated DRAM fallback" in {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d)
-      s.map()
+      s.map(bytes = 256)
       s.configure(Config(ibOnly = true))
       s.issue(refill = 1)
       assert(s.finish(1).error)
@@ -512,6 +627,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d, stalls = false)
       s.map()
+      s.map(index = 1, canonical = 0x2010, physical = 0x9000, bytes = 16)
       s.configure(Config(tileBytes = 4096, tail = 4096))
       s.issue(bytes = 4096, refill = 1); s.check(1, span(0x1000, 4096))
       s.configure(Config(tileBytes = 4096, tail = 4096))
@@ -566,7 +682,8 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   it should "continue a partially issued tile across chunks and backend transfer limits" in {
     test(new DmaReadHarness(DmaReadParams(pagesPerRegion = 2, maxSegmentBytes = 48))) { d =>
       val s = new Sim(d)
-      s.map()
+      s.map(canonical = 0x1010, bytes = 256)
+      s.map(index = 1, canonical = 0x1210, physical = 0x9000, bytes = 64)
       val c = Config(base = 0x1010, tiles = 2, tileStride = 512, tileBytes = 256, tail = 64)
       s.configure(c)
       s.issue(bytes = 80, refill = 1)
@@ -574,7 +691,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       s.issue(bytes = 240, refill = 2)
       s.check(2, span(0x1060, 176) ++ span(0x1210, 64))
       assert(s.plans.forall(_.bytes <= 48))
-      assert(s.writes.map(_._2).toVector == span(0x8010, 256) ++ span(0x8210, 64))
+      assert(s.writes.map(_._2).toVector == span(0x8000, 256) ++ span(0x9000, 64))
       val before = s.dramRequests.size
       s.configure(c)
       s.issue(bytes = 320, refill = 3)
@@ -586,7 +703,8 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   it should "arbitrate conflicting IB read and fill commands on a shared backing port" in {
     test(new DmaReadHarness(sharedIbPort = true)) { d =>
       val s = new Sim(d)
-      s.map()
+      s.map(bytes = 1024)
+      s.map(index = 1, canonical = 0x2000, physical = 0x9000, bytes = 1024)
       val c = Config(tileBytes = 1024, tail = 1024)
       s.configure(c)
       s.issue(bytes = 1024, refill = 1); s.check(1, span(0x1000, 1024))
@@ -627,10 +745,24 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
 
   it should "fetch 65 expanded words for an unaligned 4KiB payload and fill only valid bytes" in {
     test(new DmaReadHarness) { d =>
-      val s = new Sim(d)
-      s.map()
+      val s = new Sim(d, stalls = false)
+      s.map(canonical = 0x1010)
       val c = Config(base = 0x1010, tiles = 16)
-      s.configure(c); s.issue(bytes = 4096, refill = 1); s.check(1, span(0x1010, 4096))
+      s.configure(c)
+      val startCycle = s.cycle
+      s.issue(bytes = 4096, refill = 1)
+      s.waitFor(s.plans.exists(_.id.refill == 1))
+      d.io.schedulePermit(0).poke(false.B)
+      s.waitFor(s.b(d.io.nextReadRequest(0).valid))
+      d.io.pages(0).pageValid.expect(false.B)
+      d.io.pages(0).coverage.expect(((BigInt(1) << 255) - 1).U)
+      assert(s.writeBeats.count(_._1.refill == 1) == 127)
+      assert(!s.deliveries.exists(x => x.id.refill == 1 && x.chunkLast))
+      d.io.schedulePermit(0).poke(true.B)
+      s.check(1, span(0x1010, 4096))
+      val transferCycles = s.cycle - startCycle
+      assert(s.writeBeats.count(_._1.refill == 1) == 128)
+      d.io.pages(0).pageValid.expect(true.B)
       assert(s.plans.map(_.bytes).toSeq == Seq(4080, 16))
       assert(s.fetchWindows.map(x => (x._2, x._3)).toSeq == Seq(
         (BigInt(0x1000), BigInt(0x2000)), (BigInt(0x2000), BigInt(0x2040))))
@@ -639,8 +771,8 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       val ds = s.deliveries.filter(_.id.refill == 1)
       assert(ds.map(_.bytes.size).toSeq == Seq(48) ++ Seq.fill(63)(64) ++ Seq(16))
       assert(ds.map(_.mask).toSeq == Seq(7) ++ Seq.fill(63)(15) ++ Seq(1))
-      assert(s.writes.map(_._2).toVector == span(0x8010, 4096))
-      assert(s.ib.keySet.toSet == span(0x8010, 4096).toSet)
+      assert(s.writes.map(_._2).toVector == span(0x8000, 4096))
+      assert(s.ib.keySet.toSet == span(0x8000, 4096).toSet)
       // Padding in either page is still invalid for IB-only consumers.
       for ((a, id) <- Seq(0x1000 -> 2, 0x2010 -> 3)) {
         s.configure(Config(base = a, tileBytes = 16, tail = 16, ibOnly = true))
@@ -650,7 +782,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       val before = s.dramRequests.size
       s.configure(c); s.issue(bytes = 4096, refill = 4); s.check(4, span(0x1010, 4096))
       assert(s.dramRequests.size == before && s.plans.filter(_.id.refill == 4).forall(_.ib))
-      info("0x1010+4096B: 2 segments (4080/16), Gets 4096/64B, 65 raw beats, masks 7/15.../1")
+      info(s"0x1010+4096B: 2 segments, 65 raw beats, 128 compact masked commits, $transferCycles no-stall testbench cycles")
     }
   }
 
@@ -670,7 +802,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   it should "preview five independent targets before permits and accept each winner only once" in {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d)
-      s.map()
+      s.map(bytes = 256)
       s.configure(Config())
       s.issue(refill = 1); s.check(1, span(0x1000, 256))
       val streams = Seq(0, 1, 3, 4, 5)
@@ -726,7 +858,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   it should "refresh a waiting source preview on commit while preserving epoch and IB only rules" in {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d)
-      s.map()
+      s.map(canonical = 0x2000, bytes = 64)
       for (stream <- Seq(0, 1, 3, 4, 5)) s.configure(Config(stream = stream,
         base = if (stream == 5) 0x2100 else 0x2000, tileBytes = 64, tail = 64, ibOnly = stream == 5))
       for (t <- 1 until 5) d.io.schedulePermit(t).poke(false.B)
@@ -750,7 +882,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       s.fillAllow = true
       s.waitFor(s.writes.count(_._1.refill == 3) == 64)
       val fresh = s.plan(d.io.nextReadRequest(1).bits)
-      assert(fresh.ib && !fresh.fill && fresh.address == 0x9000)
+      assert(fresh.ib && !fresh.fill && fresh.address == 0x8000)
       assert(fresh.id == old.id && fresh.phase == old.phase && fresh.dest == old.dest && fresh.canonical == old.canonical)
       for (t <- Seq(2, 3)) {
         d.io.nextReadRequest(t).valid.expect(true.B)
@@ -767,10 +899,10 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
     }
   }
 
-  it should "preview IB 512B then DRAM 3584B as one reserved 4KiB logical refill" in {
+  it should "use a fully published 512B tail page then DRAM for the nonresident range" in {
     test(new DmaReadHarness) { d =>
       val s = new Sim(d)
-      s.map()
+      s.map(bytes = 512)
       s.configure(Config(tiles = 2))
       s.issue(bytes = 512, refill = 1); s.check(1, span(0x1000, 512))
       s.configure(Config(tiles = 16))
@@ -782,7 +914,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       d.io.nextReadRequest(0).valid.expect(false.B)
       s.waitFor(s.b(d.io.nextReadRequest(0).valid))
       val next = s.plan(d.io.nextReadRequest(0).bits)
-      assert(!next.ib && next.fill && next.bytes == 3584 && next.canonical == 0x1200 && next.dest == 608)
+      assert(!next.ib && !next.fill && next.bytes == 3584 && next.canonical == 0x1200 && next.dest == 608)
       assert(next.id == first.id && next.phase == first.phase && next.chunkLast && next.streamLast)
       assert(!s.dones.exists(_.id.refill == 2))
       for (_ <- 0 until 8) { assert(s.plan(d.io.nextReadRequest(0).bits) == next); s.tick() }
@@ -790,7 +922,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
       d.io.schedulePermit(0).poke(true.B); s.tick(); d.io.schedulePermit(0).poke(false.B)
       s.check(2, span(0x1000, 4096), dest = 96)
       assert(s.plans.filter(_.id.refill == 2).map(x => (x.ib, x.bytes)).toSeq == Seq(true -> 512, false -> 3584))
-      assert(s.writes.filter(_._1.refill == 2).map(_._2).toVector == span(0x8200, 3584))
+      assert(!s.writes.exists(_._1.refill == 2))
       info("Mixed refill: IB 512B + DRAM 3584B, same identity, offsets 96/608, one chunk last and done")
     }
   }
