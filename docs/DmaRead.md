@@ -1,6 +1,6 @@
 # DMA read, scheduler and IB page contract
 
-Active contract: **2026-11-06 Asia/Seoul**. This supersedes region/prefix-hit and
+Active contract: **2026-11-08 Asia/Seoul** (review fixes to the 2026-11-06 architecture). This supersedes region/prefix-hit and
 raw-offset-preserving fill in the [2026-11-05 history](DmaRead-2026-11-05.md).
 The Chisel implementation is a prototype with testbench DRAM/TL and IB storage.
 It does not implement a real TL IP, DMA output writer, instruction ABI, RF or CU
@@ -27,8 +27,14 @@ Prototype parameters (not a SW ABI):
 
 - `DmaReadParams`: default 8 page-table slots (`regions * pagesPerRegion`, legacy
   elaboration names only), max physical segment 4096B, physical IB capacity 1MiB.
-- `DmaSchedulerParams`: per-target capacity 8192B, chunk entries 2, `ageLimit=8`.
-  The aging threshold is an implementation default, not a measured latency SLA.
+- `DmaReadSystem` and `DmaReadScheduler` default to `DmaSchedulerParams.integrated`:
+  UB/WB each 16384B and four chunk entries (CWC, PLC0/1/2); QB/FB/NB retain the
+  prototype 8192B and two entries. `targetCapacityBytes`/`targetChunkEntries`
+  override limits per target; byte/entry ports use the maximum required width,
+  while each target's admission bounds and completion-ring wrap use its own limit.
+- Explicit `DmaSchedulerParams()` is the uniform 8192B/two-entry small test
+  profile; existing small harnesses pass it explicitly. `ageLimit=8` remains
+  an implementation default, not a measured latency SLA.
 - A consumer mask has 8 explicit lease bits. IDs/context/epoch remain typed 16b;
   allocation generation is 32b and may not wrap/reuse an old value in a slot.
 
@@ -92,7 +98,11 @@ For DRAM fill, pageValid is published only after coverage equals the declared
 range AND the raw beat's final derived write has committed. Even when its first
 write fills the last unique hole and the second only duplicates covered lanes,
 publication waits for the second ACK. The DRAM writer remains open until its
-source drains. For output, full coverage alone is insufficient: FinishWriter
+source drains. IB permission (`consumers != 0`) is separate from fill need:
+**pageValid forbids a new populate descriptor**, even while writerOpen has not
+closed yet. A valid unleased page with readable backing supplies OCM from DRAM
+with `fill=false`; it is not granted an implicit lease. An unpublished partial
+page remains a miss and can continue filling. For output, full coverage alone is insufficient: FinishWriter
 must also confirm the producer transaction/result stream has drained.
 
 Pages and logical refills are independent. Small 80B/976B refills can accumulate
@@ -103,7 +113,7 @@ segments. Physical segment last alone does not publish the page.
 
 ## Control and operation handoff
 
-`pageCommand` is drained, one-at-a-time, with a held `pageResult` (`error==0`
+`pageCommand` is fenced by operation, one-at-a-time, with a held `pageResult` (`error==0`
 means success). Wrong expected context/epoch/logicalId/generation, unsafe lifetime,
 alias, range/overflow, layout and incomplete publication return explicit errors.
 No rejected command mutates page metadata/storage.
@@ -111,7 +121,7 @@ No rejected command mutates page metadata/storage.
 | Operation | Contract |
 | --- | --- |
 | Allocate | Require old lifetime released, writer/readers drained, fresh larger generation. Clear coverage/valid; assign one writer. Output starts with no consumers/weight pin; DRAM fill requires readable backing. |
-| Release | Explicitly clear selected consumer lease bits and optionally the weight pin, after drain. Clearing one consumer does not release the others. |
+| Release | Clear selected consumer lease bits/optional weight pin after scoped old-consumer drain. Wait for same context/epoch/logicalId staged and active refills, completed OCM entries of that identity, and approved readers of this page. Unrelated OCM occupancy/refills and producer ACKs do not block it. Clearing one consumer does not release others. |
 | FinishWriter | Output only; require full coverage and all producer durable results acknowledged. Close producer and publish. May finish a producer while a different page is being read; this is not a rebind. |
 | Rebind | Require valid completed data, no old consumers/readers, all output producers complete, same physical page, length, generation and compatible layout. Preserve data, coverage and pageValid while changing logical binding/new leases. |
 | AbortWriter | Explicitly abort an open unpublished writer; does not free any OCM occupancy. |
@@ -128,10 +138,16 @@ The prototype uses conservative operation boundaries. Destructive control waits
 for engine reads and scheduler OCM chunks to drain and for producer ACK drain;
 rebind/reuse also checks producer completion. `engine.drained` by itself proves
 none of the producer completion conditions. Staged old consumers block release
-of their page; a held control request lets them drain instead of deadlocking new
-admission. Staged next-context producer waiters may remain while a completed
+of their page; a held Release lets them and unrelated requests stage/admit/dispatch
+until its scoped fence drains. New ingress with the released page's identity is
+held until Release completes, including on its handshake cycle. This conservative
+identity fence can include multiple pages of one logical object. Page-table reader
+counts also prevent lease removal during an approved or delayed IB response.
+Release never retags generation, clears coverage, closes a writer or frees OCM
+credit; Allocate/Invalidate/Rebind retain the stronger global drain/lifetime fence. Staged next-context producer waiters may remain while a completed
 unleased output is rebound. Configuration similarly drains staged work before
-replacing a stream. New ingress is held during control/config; no cancel exists.
+replacing a stream. New ingress is held during destructive control/config; Release
+allows unrelated ingress. No cancel exists.
 
 ## Compact write and durable ACK contracts
 
@@ -204,10 +220,15 @@ nextReadRequest -> source permit -> acceptedPlan -> backend -> sink commits/done
 W1/W2/phase/context are preserved in the staged request. One target slot may hold
 the next pending request while its previous logical refill drains. Admission RR
 is fair across targets and never gated by a source being busy. Already active
-streams are excluded to preserve one cursor owner. An offered admission descriptor
-is irrevocable while engine ready is low; identity/data remain stable, and RR or
-credits do not move until its fire. Published producer readiness may not be revoked
-while such an offer is outstanding; destructive metadata control is fenced.
+streams are excluded to preserve one cursor owner. A selected/held admission descriptor is **unreserved** until engine.refill.fire.
+While eligible and stalled it retains identity/data. Every cycle, including the
+final handshake, rechecks enabled, full, producer readiness and credit. An
+ineligible held offer withdraws valid, preserves its staged payload, and permits
+another eligible target to proceed; this internal Decoupled offer is not
+Irrevocable. Recovery offers the original request exactly once. Both engine and
+scheduler share this qualified handshake; neither reserves or advances admission
+RR on selection, lock, permit, or an ineligible cycle. Destructive control remains
+fenced. Once refill.fire occurs, status changes cannot cancel the refill.
 
 New admission requires enabled, needsExternalSupply, producerReady, not-full,
 free >=4096B and a free chunk entry. The first tiled-row dependency can specify a
@@ -258,8 +279,8 @@ git diff --check
 ```
 
 The new target explicitly compiles DmaRead_Test.scala (shared byte model),
-DmaReadScheduler_Test.scala and IbPageLifecycle_Test.scala, and runs the three
-new suite classes. The existing read target retains its AG/transport regressions.
+DmaReadScheduler_Test.scala, IbPageLifecycle_Test.scala and ReviewProbe.scala,
+and runs all four arbiter/lifecycle/review suite classes. The existing read target retains its AG/transport regressions.
 Expected bytes come from configurations, page specs and independent producer
 sequences, not DUT cursor/plan copies. The backing model commits actual masked
 writes and rejects uninitialized IB reads. Deterministic bubbles, poison,

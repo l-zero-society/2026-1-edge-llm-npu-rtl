@@ -35,7 +35,7 @@ class DmaReadSystemIO(p: DmaReadParams, s: DmaSchedulerParams) extends Bundle {
 /** Typed integration boundary for OCM owners. No controller/RF/ABI changes.
   * The optional physical single-port arbiter is separate from source scheduling.
   */
-class DmaReadSystem(p: DmaReadParams = DmaReadParams(), s: DmaSchedulerParams = DmaSchedulerParams(),
+class DmaReadSystem(p: DmaReadParams = DmaReadParams(), s: DmaSchedulerParams = DmaSchedulerParams.integrated,
                     sharedIbPort: Boolean = false) extends Module {
   val io = IO(new DmaReadSystemIO(p, s))
   val engine = Module(new DmaReadEngine(p))
@@ -45,6 +45,7 @@ class DmaReadSystem(p: DmaReadParams = DmaReadParams(), s: DmaSchedulerParams = 
   engine.io.config.bits := io.config.bits
   io.config.ready := engine.io.config.ready && !scheduler.io.hasStaged
   val finish = io.pageCommand.bits.op === IbPageOp.FinishWriter.U
+  val release = io.pageCommand.bits.op === IbPageOp.Release.U
   val controlAllowed = finish || scheduler.io.controlDrained
   engine.io.pageCommand.valid := io.pageCommand.valid && controlAllowed
   engine.io.pageCommand.bits := io.pageCommand.bits
@@ -55,11 +56,11 @@ class DmaReadSystem(p: DmaReadParams = DmaReadParams(), s: DmaSchedulerParams = 
   engine.io.controlDrained := scheduler.io.controlDrained
   scheduler.io.controlCommand.valid := io.pageCommand.valid && !finish
   scheduler.io.controlCommand.bits := io.pageCommand.bits
-  scheduler.io.holdNewRequests := io.config.valid || io.pageCommand.valid
+  scheduler.io.holdNewRequests := io.config.valid || (io.pageCommand.valid && !release)
   // Drain already staged old consumers instead of deadlocking them behind a
   // control hold. New-context producer waiters do not block retained rebind.
   scheduler.io.admissionPause := (io.config.valid && !scheduler.io.hasStaged) ||
-    (io.pageCommand.valid && !finish && !scheduler.io.controlConflict)
+    (io.pageCommand.valid && !finish && !release && !scheduler.io.controlConflict)
   scheduler.io.requests <> io.requests; scheduler.io.status := io.status; scheduler.io.pages := engine.io.pages
   engine.io.refill <> scheduler.io.refill
   scheduler.io.candidate := engine.io.nextReadRequest

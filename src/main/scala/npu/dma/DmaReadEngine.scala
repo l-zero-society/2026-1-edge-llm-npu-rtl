@@ -5,8 +5,8 @@ import chisel3.util._
 
 /** Standalone production read dispatch/return path. One refill per target and
   * one physical segment per source. Source reservations include queued issue,
-  * all responses and both fill-through sinks. Mapping/config replacement is
-  * accepted only after every approved refill and completion has drained.
+  * all responses and both fill-through sinks. Mapping/config replacement uses
+  * global drain; lease-only Release uses the affected logical identity's drain.
   */
 class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   private val targets = ReadTarget.Count
@@ -57,7 +57,6 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   io.pages := table.io.pages
   table.io.command <> io.pageCommand
   io.pageResult <> table.io.result
-  table.io.controlDrained := io.drained && io.controlDrained
   table.io.writersDrained := producer.io.drained
   io.writersDrained := producer.io.drained && table.io.pages.map(x =>
     !x.allocated || x.metadata.writer =/= IbWriter.Output.U || !x.writerOpen).reduce(_ && _)
@@ -79,6 +78,13 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   val active = RegInit(VecInit(Seq.fill(targets)(false.B)))
   val pending = RegInit(VecInit(Seq.fill(targets)(false.B)))
   val requests = Reg(Vec(targets, new RefillRequest))
+  val releasing = io.pageCommand.valid && io.pageCommand.bits.op === IbPageOp.Release.U
+  def releaseReference(r: RefillRequest): Bool = {
+    val c = io.pageCommand.bits
+    r.contextId === c.expectedContext && r.epoch === c.expectedEpoch && r.logicalId === c.expectedLogicalId
+  }
+  val releaseDrained = !(0 until targets).map(t => active(t) && releaseReference(requests(t))).reduce(_ || _)
+  table.io.controlDrained := io.controlDrained && Mux(releasing, releaseDrained, io.drained)
   val remaining = Reg(Vec(targets, UInt(13.W)))
   val dispatched = Reg(Vec(targets, UInt(13.W)))
   val committed = Reg(Vec(targets, UInt(13.W)))
@@ -127,7 +133,8 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
   val streamInUse = (0 until targets).map(t => active(t) && requests(t).stream === incoming.stream).reduce(_ || _)
   io.refill.ready := incoming.target < targets.U && incoming.stream < streams.U &&
     !active(incoming.target) && !streamInUse && configured(incoming.stream) &&
-    !exhausted(incoming.stream) && !io.config.valid && !io.pageCommand.valid
+    !exhausted(incoming.stream) && !io.config.valid &&
+    (!io.pageCommand.valid || (releasing && !releaseReference(incoming)))
   when(io.refill.fire) {
     assert(incoming.payloadBytes > 0.U && incoming.payloadBytes <= 4096.U && incoming.payloadBytes(3, 0) === 0.U)
     assert(incoming.destinationOffset(3, 0) === 0.U)
@@ -203,7 +210,10 @@ class DmaReadEngine(p: DmaReadParams = DmaReadParams()) extends Module {
     plan.payloadBytes := bytes
     plan.chunkLast := bytes === remaining(t) || streamEnd || (c.stopAtRowEnd && rowEnd)
     plan.streamLast := streamEnd
-    plan.fill := mapped && !hit && page.writerOpen && mapping.writer === IbWriter.DramFill.U && mapping.dramReadable
+    // Publication and read permission are separate. A published unleased page
+    // may fall back to readable DRAM, but must never reopen its fill writer.
+    plan.fill := mapped && !page.pageValid && page.writerOpen &&
+      mapping.writer === IbWriter.DramFill.U && mapping.dramReadable
     plan.fillAddress := mapping.ibPageBase + relative
     plan.region := region
     plan.generation := mapping.generation

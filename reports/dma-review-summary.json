@@ -1,0 +1,333 @@
+{
+  "date": "2026-11-08",
+  "timezone": "Asia/Seoul",
+  "head": "c3d43201bb5acc58e845fc4bd068ba47073a4cea",
+  "branch": "feat/tpu-rocc-driver",
+  "before": {
+    "suite": "npu.dma.ReviewProbe",
+    "passed": 0,
+    "failed": 2,
+    "skipped": 0,
+    "exit": 1,
+    "log": "dma-review-before.log"
+  },
+  "intermediate": {
+    "passed": 6,
+    "failed": 1,
+    "skipped": 0,
+    "exit": 1,
+    "reason": "Release test driver missed command fire inside consume helper; driver fixed",
+    "log": "dma-review-focused.log"
+  },
+  "commands": [
+    {
+      "command": "make -j1 dma-read-test dma-read-compile dma-arbiter-test RTL_SBT=sbt",
+      "exit": 0,
+      "log": "dma-review-validation.log"
+    },
+    {
+      "command": "sbt 'Test / compile'",
+      "exit": 1,
+      "log": "dma-review-full-compile.log",
+      "baselineErrors": [
+        "EdgeNPUTop.scala:8 MacUnit",
+        "EdgeNPUTop.scala:9 MXU_16",
+        "EdgeNPUTop.scala:10 DataOrchUnit_16",
+        "npu/core/Sequencer.scala:28 out_enable"
+      ]
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "totals": {
+    "passed": 40,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": [
+    {
+      "suite": "npu.dma.DmaReadTest",
+      "tests": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 761.013,
+      "timestamp": "2026-11-08T18:09:50",
+      "cases": [
+        {
+          "name": "DMA read path should align expanded DRAM words and IB lanes with poisoned padding and exact logical bytes",
+          "seconds": 135.621
+        },
+        {
+          "name": "DMA read path should traverse GEMM rows passes K tails and compact row cache using canonical addresses",
+          "seconds": 46.973
+        },
+        {
+          "name": "DMA read path should keep W1 W2 cursors independent across explicit fusion phases and weight stride jumps",
+          "seconds": 39.438
+        },
+        {
+          "name": "DMA read path should supply linear direct Quant Freq and NormSpill payloads with configured repeat boundaries",
+          "seconds": 18.877
+        },
+        {
+          "name": "DMA read path should supply weight working sets once in local cache mode and repeat them in STREAM mode",
+          "seconds": 34.449
+        },
+        {
+          "name": "DMA read path should commit real fill bytes before hits and preserve gaps partial pages and epochs",
+          "seconds": 37.542
+        },
+        {
+          "name": "DMA read path should split hit miss and mapping boundaries without early chunk last or filling padding",
+          "seconds": 33.577
+        },
+        {
+          "name": "DMA read path should reject invalid IB only data without a fabricated DRAM fallback",
+          "seconds": 12.702
+        },
+        {
+          "name": "DMA read path should overlap independent full width returns and reserve a target through delayed fill commit",
+          "seconds": 42.377
+        },
+        {
+          "name": "DMA read path should advance once at accepted dispatch and preserve a latched issue through long backend stalls",
+          "seconds": 14.163
+        },
+        {
+          "name": "DMA read path should continue a partially issued tile across chunks and backend transfer limits",
+          "seconds": 33.094
+        },
+        {
+          "name": "DMA read path should arbitrate conflicting IB read and fill commands on a shared backing port",
+          "seconds": 29.656
+        },
+        {
+          "name": "DMA read path should merge dense compact and non power of two tiles without crossing a pass",
+          "seconds": 91.798
+        },
+        {
+          "name": "DMA read path should fetch 65 expanded words for an unaligned 4KiB payload and fill only valid bytes",
+          "seconds": 63.087
+        },
+        {
+          "name": "DMA read path should keep whole raw words and one logical last with a small maximum TL Get profile",
+          "seconds": 34.358
+        },
+        {
+          "name": "DMA read path should preview five independent targets before permits and accept each winner only once",
+          "seconds": 25.704
+        },
+        {
+          "name": "DMA read path should refresh a waiting source preview on commit while preserving epoch and IB only rules",
+          "seconds": 20.706
+        },
+        {
+          "name": "DMA read path should use a fully published 512B tail page then DRAM for the nonresident range",
+          "seconds": 46.891
+        }
+      ],
+      "passed": 18
+    },
+    {
+      "suite": "npu.dma.DmaSourceSchedulerTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 4.303,
+      "timestamp": "2026-11-08T18:22:43",
+      "cases": [
+        {
+          "name": "DMA source scheduler should apply P0 P1 P2 and advance only on actual accepts with independent sources",
+          "seconds": 1.483
+        },
+        {
+          "name": "DMA source scheduler should round robin equal priorities independently across all five targets",
+          "seconds": 0.332
+        },
+        {
+          "name": "DMA source scheduler should promote an aged prefetch under continuous P0 and preserve age across source changes",
+          "seconds": 0.271
+        },
+        {
+          "name": "DMA source scheduler should recheck full and enabled before reserving a held admission without blocking other targets",
+          "seconds": 2.217
+        }
+      ],
+      "passed": 4
+    },
+    {
+      "suite": "npu.dma.DmaReadArbiterTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 737.506,
+      "timestamp": "2026-11-08T18:22:43",
+      "cases": [
+        {
+          "name": "DMA scheduler integration should drain each source while the other stalls and accept two sources after independent admissions",
+          "seconds": 103.009
+        },
+        {
+          "name": "DMA scheduler integration should allow IB during long DRAM stalls and DRAM during long IB stalls",
+          "seconds": 64.408
+        },
+        {
+          "name": "DMA scheduler integration should reserve once and finish continuations despite full hungry and enable changes",
+          "seconds": 313.274
+        },
+        {
+          "name": "DMA scheduler integration should keep tail full thresholds chunk exhaustion and simultaneous consume commit accounting exact",
+          "seconds": 31.76
+        },
+        {
+          "name": "DMA scheduler integration should preserve buffered error bytes until confirmed discard and wait for every producer page",
+          "seconds": 34.098
+        },
+        {
+          "name": "DMA scheduler integration should apply the 4096B free threshold even to tail requests and release only consumed occupancy",
+          "seconds": 99.84
+        },
+        {
+          "name": "DMA scheduler integration should retain partially delivered error data until an identity matched discard commit",
+          "seconds": 38.194
+        },
+        {
+          "name": "DMA scheduler integration should admit all five staged targets fairly without a source busy global head of line",
+          "seconds": 28.752
+        },
+        {
+          "name": "DMA scheduler integration should drain a staged old consumer before releasing its page without a control hold deadlock",
+          "seconds": 24.171
+        }
+      ],
+      "passed": 9
+    },
+    {
+      "suite": "npu.dma.IbPageLifecycleTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 342.501,
+      "timestamp": "2026-11-08T18:22:43",
+      "cases": [
+        {
+          "name": "IB page publication and operation handoff should publish a 4096B page only after every unique lane despite duplicate small refills",
+          "seconds": 103.606
+        },
+        {
+          "name": "IB page publication and operation handoff should compact every head offset and tail to page zero and replay only fully published payloads",
+          "seconds": 132.966
+        },
+        {
+          "name": "IB page publication and operation handoff should hold the second derived write without duplicate OCM data or early publication",
+          "seconds": 20.59
+        },
+        {
+          "name": "IB page publication and operation handoff should retain output as next input across A B swaps and reject unsafe or stale mutations",
+          "seconds": 68.28
+        },
+        {
+          "name": "IB page publication and operation handoff should arbitrate output and DRAM fill commits and serialize shared IB read write conflicts",
+          "seconds": 17.059
+        }
+      ],
+      "passed": 5
+    },
+    {
+      "suite": "npu.dma.ReviewProbe",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 445.65,
+      "timestamp": "2026-11-08T18:22:43",
+      "cases": [
+        {
+          "name": "should allow an independent WB refill to unblock consumption while an unrelated page release waits",
+          "seconds": 22.054
+        },
+        {
+          "name": "should not issue a second write into a page whose DRAM fill writer just closed",
+          "seconds": 7.564
+        },
+        {
+          "name": "should serialize same-cycle page lease release against matching ingress while admitting unrelated ingress",
+          "seconds": 15.396
+        },
+        {
+          "name": "should retain four 4KiB chunks independently in UB and WB using the integrated profile",
+          "seconds": 400.636
+        }
+      ],
+      "passed": 4
+    }
+  ],
+  "metrics": {
+    "integratedCapacityBytes": [
+      16384,
+      16384,
+      8192,
+      8192,
+      8192
+    ],
+    "integratedEntries": [
+      4,
+      4,
+      2,
+      2,
+      2
+    ],
+    "reservationBytes": 4096,
+    "ubWbRetainedChunksEach": 4,
+    "fifthAdmissionBeforeConsume": false,
+    "publishedUnleasedPage": {
+      "validBytes": 64,
+      "durableWrites": 1,
+      "durableBytes": 64,
+      "secondPlanFill": false,
+      "coverage": "0xf",
+      "generation": 1
+    },
+    "unaligned4KiB": {
+      "segments": 2,
+      "rawBeats": 65,
+      "compactCommits": 128,
+      "cycles": 134
+    },
+    "smallMaxGet128": {
+      "segments": 1,
+      "gets": 32,
+      "rawBeats": 64,
+      "chunkLast": 1
+    },
+    "systemDualSourceAcceptCycles": 1,
+    "systemSimultaneousFullBeatCycles": 64
+  },
+  "sourceSha256": {
+    "src/main/scala/npu/dma/DmaReadEngine.scala": "c0d8dde425cd3970c610077298338a0d4058aadcc85f846bfc1b6ede19df0133",
+    "src/main/scala/npu/dma/DmaReadScheduler.scala": "98fba05e72c8436e65aa1957d7eb567c85599834db8ac477e8db6c4ddc1a017a",
+    "src/main/scala/npu/dma/DmaReadSystem.scala": "5ccb0d5613de0e365a1d9a1c28c9ac0c4b9bbf67f417184f057c96f848f6c3a8",
+    "src/main/scala/npu/dma/IbBurstReader.scala": "dc7f9e0fdeb1ee099bb2b94b10e8c7d280a4aee5719034d49f92c99e3415ad03",
+    "src/main/scala/npu/dma/IbCompactWriter.scala": "a08eb2bd50c2266d65aefd80e2c5e383cf6520e5cedeff0c20db05f2bcebd7b3",
+    "src/main/scala/npu/dma/IbPageTable.scala": "bae7b491ae0869116b18b89b5b427fab5bb4a492bc2cf28b2b6d737aee426889",
+    "src/main/scala/npu/dma/IbPageTypes.scala": "1093ed061e12ba726a8d74ff4ed14b875f6366e59f4e687632d300d0eb3d01c4",
+    "src/main/scala/npu/dma/IbReadFillArbiter.scala": "a4224b0d674536e220883dc451f28808d71b1ba7b3ea6ebff56b6a648a21371e",
+    "src/main/scala/npu/dma/ReadTypes.scala": "09c119ae5086eac3511c77fb0dafae850282857c3e4524cfd3f7ef0f23c79e31",
+    "src/test/scala/DmaReadScheduler_Test.scala": "68f667f05099008c6965690ffc1cfe44a0aaa6fd59fce7fccba415d6162e0809",
+    "src/test/scala/DmaRead_Test.scala": "9f57b26cbe63eca6884e9ee72662efaeb0c1a64b6569115ff51d1844645ac0e7",
+    "src/test/scala/IbPageLifecycle_Test.scala": "f5cef9f0caf52ab666e987b7178567799ece283916e4edad0de11559b91c9f77",
+    "src/test/scala/ReviewProbe.scala": "940385ea4bf98a62438d94d250fb85e64f12475ce5a4d8e60167e19661558d4b"
+  },
+  "limits": [
+    "Real DRAM/TL IP and full output DMA writer not connected",
+    "No physical SRAM/Fmax timing validation",
+    "Non-DMA regression blocked by baseline full compile errors"
+  ]
+}

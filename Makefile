@@ -117,8 +117,8 @@ dma-read-compile:
 
 dma-arbiter-test:
 	$(RTL_SBT) $(DMA_SOURCES) \
-	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "DmaReadScheduler_Test.scala", "IbPageLifecycle_Test.scala").contains(f.getName)))' \
-	  'testOnly npu.dma.DmaSourceSchedulerTest npu.dma.DmaReadArbiterTest npu.dma.IbPageLifecycleTest'
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "DmaReadScheduler_Test.scala", "IbPageLifecycle_Test.scala", "ReviewProbe.scala").contains(f.getName)))' \
+	  'testOnly npu.dma.DmaSourceSchedulerTest npu.dma.DmaReadArbiterTest npu.dma.IbPageLifecycleTest npu.dma.ReviewProbe'
 
 zero-padder-test:
 	$(RTL_SBT) \

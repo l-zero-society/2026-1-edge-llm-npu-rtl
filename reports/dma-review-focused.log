@@ -1,0 +1,54 @@
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Compile / unmanagedSources
+[info] The new value will be used by Compile / bspBuildTargetSourcesItem, Compile / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Test / unmanagedSources
+[info] The new value will be used by Test / bspBuildTargetSourcesItem, Test / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] compiling 4 Scala sources to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/classes ...
+[warn] 291 feature warnings; re-run with -feature for details
+[warn] one warning found
+[info] done compiling
+[info] compiling 3 Scala sources to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/test-classes ...
+[warn] 140 feature warnings; re-run with -feature for details
+[warn] one warning found
+[info] done compiling
+[warn] src/main/scala/npu/dma/DmaReadScheduler.scala 208:22: [W004] Dynamic index with width 2 is too wide for Vec of size 2 (expected index width 1).
+[warn]       val id = ids(t)(index)
+[warn]                      ^
+[warn] There were 1 warning(s) during hardware elaboration.
+[warn] src/main/scala/npu/dma/DmaReadScheduler.scala 208:22: [W004] Dynamic index with width 2 is too wide for Vec of size 2 (expected index width 1).
+[warn]       val id = ids(t)(index)
+[warn]                      ^
+[warn] There were 1 warning(s) during hardware elaboration.
+[info] DmaSourceSchedulerTest:
+[info] DMA source scheduler
+[info] - should apply P0 P1 P2 and advance only on actual accepts with independent sources
+[info] - should round robin equal priorities independently across all five targets
+[info] - should promote an aged prefetch under continuous P0 and preserve age across source changes
+[info]   + P2 promoted after 8 competing accepted opportunities; no wall-clock bound during source stall
+[info] - should recheck full and enabled before reserving a held admission without blocking other targets
+[warn] src/main/scala/npu/dma/DmaReadScheduler.scala 208:22: [W004] Dynamic index with width 3 is too wide for Vec of size 4 (expected index width 2).
+[warn]       val id = ids(t)(index(ptrBits - 1, 0))
+[warn]                      ^
+[warn] There were 1 warning(s) during hardware elaboration.
+[info] ReviewProbe:
+[info] - should allow an independent WB refill to unblock consumption while an unrelated page release waits *** FAILED ***
+[info]   0 did not equal 1 (ReviewProbe.scala:37)
+[info] - should not issue a second write into a page whose DRAM fill writer just closed
+[info] - should retain four 4KiB chunks independently in UB and WB using the integrated profile
+[info]   + UB and WB: 4 x 4096B retained, fifth blocked independently, one consume permits exactly one refill
+[info] Run completed in 9 minutes, 14 seconds.
+[info] Total number of tests run: 7
+[info] Suites: completed 2, aborted 0
+[info] Tests: succeeded 6, failed 1, canceled 0, ignored 0, pending 0
+[info] *** 1 TEST FAILED ***
+[error] Failed tests:
+[error] 	npu.dma.ReviewProbe
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 562 s (0:09:22.0), completed 2026. 11. 8. 오후 6:09:11

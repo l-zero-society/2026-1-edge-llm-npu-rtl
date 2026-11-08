@@ -1,195 +1,168 @@
-# DMA Arbiter / IB page publication 검증 — 2026-11-06 Asia/Seoul
+# DMA Arbiter 리뷰 후속 수정 검증 — 2026-11-08 Asia/Seoul
 
-작업 시작 branch는 `feat/tpu-rocc-driver`, 실제 HEAD는
-`c75da8b5c62927998ab6d676c8d2b9599c3d7909`이었다. Working tree는 깨끗했고,
-적용되는 AGENTS.md는 상위 경로와 저장소에서 발견되지 않았다. HEAD reset,
-push 또는 PR 생성은 하지 않았다. 연결된 Notion의 최신 2026-11-06 합의를
-읽었으며, 이전 v3/v2의 prefix-hit/원본 offset fill보다 이번 계약을 우선했다.
+실제 시작 HEAD: `c3d43201bb5acc58e845fc4bd068ba47073a4cea`, branch
+`feat/tpu-rocc-driver`. 작업 트리는 깨끗했다. 상위 경로와 저장소의 적용 가능한
+AGENTS.md는 발견되지 않았다. Reset/push/PR 없이 기존 구현을 수정했다.
+UB/WB/QB/FB/NB controller, RF, ComputeUnit, SW ABI, 실제 DRAM/TL IP와 output DMA
+writer는 수정하지 않았다. Scala 2.13.12 / Chisel 6.7.0 / chiseltest 6.0.0 /
+ScalaTest 3.2.16, sbt 1.12.6 / Java 26.0.2.1 환경이다.
 
-실제 build.sbt: Scala 2.13.12, Chisel 6.7.0, chiseltest 6.0.0,
-ScalaTest 3.2.16. sbt 1.12.6 / Homebrew Java 26.0.2.1에서 실행했다.
-Sbt 프로세스는 순차 실행했으며 실제 DRAM/TL IP에 의존하지 않는다.
+## 수정 전 재현
 
-## Baseline과 최종 실행
+제공된 원문을 `src/test/scala/ReviewProbe.scala`에 먼저 저장하고 다음 명령을
+실행했다. 긴 기존 baseline suite는 수정 전에 반복하지 않았다.
 
-변경 전 기존 suite를 이번 세션에서 실행했다. 새 baseline XML은
-2026-11-06 02:38:13 시작, 600.847초, **18 PASS / 0 FAIL**이다.
-별도 `make dma-read-compile RTL_SBT=sbt`는 exit 0이었다.
-이전 대화의 18 PASS를 이번 결과로 재사용한 것이 아니다.
-원시 집계는 `dma-baseline-summary.json`에 보존했다.
-
-| 실제 실행 명령 | exit / 결과 |
-| --- | --- |
-| `make -j1 dma-read-test dma-read-compile RTL_SBT=sbt` | 변경 전 baseline: 테스트 XML 18/0, DMA compile 별도 exit 0 확인 |
-| `make -j1 dma-read-test dma-read-compile dma-arbiter-test RTL_SBT=sbt` | exit 0; AG 18 PASS + 새 suite 18 PASS, DMA compile PASS |
-| `make -j1 dma-read-test dma-read-compile RTL_SBT=sbt` (소스 고정 후 최종 재실행) | exit 0; AG 18 PASS / 0 FAIL, DMA compile PASS |
-| `sbt 'Test / compile'` | exit 1; 기존 top-level compile 오류 4건 재확인, 신규 DMA 오류 없음 |
-| `git diff --check` | exit 0, PASS |
-
-최종 결과는 **4 suite, 고유 test 36 PASS / 0 FAIL / 0 skipped / 0 errors**다.
-마지막 publication guard와 testbench 변경 후 RTL/test source 12개를 SHA256으로
-고정했고, 새 suite 및 마지막 AG 재실행 사이에 source가 바뀌지 않았음을 확인했다.
-
-| 최종 suite | PASS | FAIL | skipped | 실제 test 시간 |
-| --- | ---: | ---: | ---: | ---: |
-| `DmaReadTest` | 18 | 0 | 0 | 730.872s |
-| `DmaSourceSchedulerTest` | 4 | 0 | 0 | 3.387s |
-| `DmaReadArbiterTest` | 9 | 0 | 0 | 689.038s |
-| `IbPageLifecycleTest` | 5 | 0 | 0 | 331.544s |
-
-서로 다른 suite는 sbt 기본 설정으로 병행 실행될 수 있으므로 위 시간의 합을
-전체 wall time으로 보고하지 않는다. Sbt 프로세스 자체는 순차 실행했다.
-[XML 기반 집계와 source hash](dma-validation-summary.json),
-[실제 실행 log](dma-validation-run.log),
-[이번 baseline 집계](dma-baseline-summary.json)에 근거를 보존했다.
-
-새 Makefile `dma-arbiter-test`는 아래 파일을 모두 **실제로 컴파일**한다.
-
-- `DmaRead_Test.scala`: 공통 harness/byte backing model과 기존 AG suite
-- `DmaReadScheduler_Test.scala`: `DmaSourceSchedulerTest`, `DmaReadArbiterTest`
-- `IbPageLifecycle_Test.scala`: `IbPageLifecycleTest`
-
-새 target의 testOnly 목록은 위 새 suite 3개를 명시한다. 기존 `dma-read-test`의
-AG suite도 유지한다. 새 파일을 기존 단일-file filter 밖에 방치하지 않았다.
-
-## 변경 파일
-
-| 파일 | 변경 내용 |
-| --- | --- |
-| `ReadTypes.scala` | logicalId, allocation generation/physical commit tag, page table 크기/IB capacity parameter |
-| `IbPageTypes.scala` | page metadata/state/control/result, consumer leases, compact producer request/result |
-| `IbPageTable.scala` | overflow/alias/lifetime 검증, unique coverage, full publication, allocate와 retain/rebind 분리 |
-| `IbCompactWriter.scala` | 1~2개 파생 masked write의 durable ACK, held-grant fill/output 중재 및 producer adapter |
-| `DmaReadEngine.scala` | full-page lookup, compact mapping, 최종 파생 commit 기반 publication, 기존 독립 source/fanout 유지 |
-| `DmaReadScheduler.scala` | P0/P1/P2, source별 accepted-only RR/aging, fair admission, 단일 byte/chunk credit owner와 error ledger |
-| `DmaReadSystem.scala` | typed OCM/status/consume/discard adapter, producer/control drain fence, engine/IB/scheduler 통합 |
-| `DmaRead_Test.scala` | 새 정책으로 기존 회귀 의미 수정, 공통 byte model 공유, 실제 write/reader/admission scoreboard |
-| `DmaReadScheduler_Test.scala` | source unit 및 admission/credit/full/producer/deadlock 통합 검증 |
-| `IbPageLifecycle_Test.scala` | compact fill/부분 publication 금지/duplicate/gap/output handoff/잘못된 command 검증 |
-| `Makefile` | 기존 runner 유지, 명시적 `dma-arbiter-test` 추가 |
-| `docs/DmaRead.md` | 현재 port/state/credit/lifecycle 및 성능 제한 계약 |
-| `docs/DmaRead-2026-11-05.md` | 이전 계약을 변경 이력으로 보존; 현재 mapping 정책으로 사용하지 않도록 표시 |
-| `reports/dma-read-validation.md`, summary JSON 및 실행 log | 이번 명령/실제 결과와 고정 source hash |
-
-RTL 파일 경로는 `src/main/scala/npu/dma/`, test 경로는 `src/test/scala/`다.
-기존 `IbBurstReader`, `IbReadFillArbiter`는 수정 없이 재사용했다.
-UB/WB/QB/FB/NB controller, RF, ComputeUnit, SW ABI 파일은 변경하지 않았다.
-
-## 확정한 port와 state ownership
-
-`requests[target]`는 5개의 typed pending 요청을 독립적으로 보존한다.
-`status`는 enabled/producerReady/needsExternalSupply/demand/impending/hungry/full,
-required page mask와 expected generation을 제공한다. Admission은 단일 engine
-refill.fire에서 일어나며 source busy와 독립이다. 이후
-`nextReadRequest -> schedulePermit -> acceptedPlan -> backend -> commit/done`으로
-진행한다. Source별 winner는 최대 하나이고 engine의 기존 source RR은 fallback이다.
-
-- Engine: canonical cursor, target logical refill, sourceBusy/descriptor, response
-  identity/routing 및 dual-sink exactly-once를 계속 단독 소유한다.
-- Page table: canonicalStart/validBytes/ibPageBase/context/epoch/logicalId/generation,
-  writerOpen, consumer mask, keepWeight, reader count, coverage, pageValid를 소유한다.
-- Compact writer: 파생 write part만 추적한다. Source 진행 복사본을 만들지 않는다.
-- Scheduler: target pending request, admission RR와 OCM reservation/occupancy/chunk
-  ledger를 소유한다. Source scheduler는 priority/RR/age만 관리한다.
-- Physical IB arbiters: fill/output write 충돌과 선택적 read/write 공유 port 충돌을
-  durable ACK/backpressure로 처리한다. Source priority와 별개다.
-
-기본값: 8 page slots, IB 1MiB, max segment 4096B, OCM target당 8192B/entry 2개,
-ageLimit 8. Age는 경쟁하는 eligible 후보가 같은 source에서 실제 accept된
-opportunity만 세며 source 변경 시 보존, accept 시 reset된다. 자원이 영구 stall된
-시간에 대한 latency 보장을 주장하지 않는다. 동일 priority는 source RR,
-admission도 별도 RR로 공정하게 고른다.
-
-Credit은 scheduler만 소유한다. Refill.fire 때 보수적 4096B와 entry 1개를 예약한다.
-OCM accept byte는 reserved -> buffered로 이동한다. Done ACK는 unused reserve만
-해제하며 buffered bytes/entry를 free로 돌리지 않는다. 정상 consume에서만 data를
-반환한다. Error entry는 matching `discardCommit`이 실제 rollback을 확인할 때까지
-occupancy와 context error를 보존한다. Tail도 free >=4096B admission 기준을 따른다.
-Full/hungry/disabled 변화는 이미 admission한 continuation을 중단하지 않는다.
-
-## 새 page 정책과 검증 조건
-
-한 resident chunk는 전체 4KiB page를 점유하며 validBytes는 16..4096B다.
-`ibPageBase + canonicalAddress - canonicalStart`로 offset 0부터 compact 저장한다.
-Unique 16B coverage를 OR하며 pageValid 전에는 어떤 prefix도 hit하지 않는다.
-4096B page의 512B commit 상태는 miss다. 별도 512B tail page가 전부 commit된
-후의 mixed-source refill은 허용한다.
-
-PageValid는 전체 unique range와 raw beat의 **마지막 파생 write commit** 이후다.
-첫 파생 write에서 마지막 hole이 메워지고 두 번째가 중복 write여도 publication은
-두 번째 durable ACK까지 기다린다. Output은 여기에 producer result drain 및 명시적
-FinishWriter도 요구한다. Rebind는 generation/data/coverage/valid를 보존하며,
-새 Allocate만 fresh generation과 invalidation을 만든다.
-
-| 대표 조건 | 최종 assertion / 실제 측정 |
-| --- | --- |
-| Aligned dense/compact 4096B | 1 segment, 1 default Get, 64 raw beat |
-| Canonical 0x1010 + 4096B | DRAM 4080/16 segment, 4096/64 Get, 65 raw beat; OCM masks 7/63*15/1 |
-| 위 compact IB 저장 | 0x8000..0x8fff, 128 masked durable writes; 첫 segment만 완료하면 pageValid=0; no-stall profile 134 cycle |
-| maxGet=128 profile | 1 segment, 32 Get, 64 raw beat, chunk last 1회 |
-| 미완성 4096B page | 80B/976B 등의 작은 refill과 duplicate를 누적; 512B commit 시점에도 IB read/partial hit 없음 |
-| 독립 512B tail page | 완성된 512B만 IB, 다음 nonresident 3584B는 DRAM; 같은 logical identity/last/done |
-| Repacking | DRAM offset 0/16/32/48, tails 16/32/48/144, word crossing과 두 번째 write 장기 stall |
-| Credit | 4096 경계/tail, entry exhaustion, full 중 continuation, consume+payload 동시 edge, completion backpressure |
-| Error | 이미 전달한 512B를 free로 숨기지 않음; wrong discard identity 거부 후 확인된 discard에서만 반환 |
-| Producer row | 필요한 모든 page의 valid/generation/lease/identity를 함께 확인하여 admission 전 대기 |
-| Handoff | A(input)/B(output) -> B(input)/A(output) -> A(input)/B(output) -> B(input); custom output data를 DRAM 재요청 없이 replay |
-| 안전 거부 | old generation, wrong context/logicalId, layout, range/overflow, IB bound/alias, live consumer/reader/weight overwrite |
-
-기대 byte trace는 config/page spec/producer input sequence로 독립 구성한다.
-DUT plan은 backend 응답을 만들기 위한 request로만 사용하며 기대 주소 정답으로
-복사하지 않는다. Poison padding, byte-addressed IB commit store, ready/valid hold
-monitor, exactly-once/byte count, deterministic bubble과 timeout을 사용한다.
-Idle don't-care data peeks만 줄였고, 이전 cycle에 stall된 port는 valid가 내려가도
-반드시 검사하여 protocol drop 검증을 유지했다.
-
-## 중간 검증에서 발견한 수정
-
-Focused first-miss suite 최초 실행은 1 FAIL이었다. 재할당과 같은 cycle의 이전
-pageValid 상태가 writer 자동-close를 발동시켜 새 writerOpen을 덮는 우선순위
-문제였다. Command.fire 동안 auto-close를 막았고 해당 focused suite는 1 PASS로
-재실행했다. 이 실패를 baseline 오류로 분류하거나 숨기지 않았다.
-
-중간 새 target은 Source 3 / Integration 8 / Lifecycle 4, 합계 15 PASS였다.
-이후 queued consumer drain fence, 추가 admission/physical arbitration 검증 및
-마지막 파생-write publication guard를 보강했으므로 이 숫자를 최종 결과로
-재사용하지 않는다. Negative protocol 사례는 명시적 error return/ready hold를
-검사하는 정상 test다. Expected assertion failure를 정상 회귀 failure로 섞지 않았다.
-
-## IP / build / 성능 제한
-
-실제 DRAM/TL IP와 전체 output DMA writer는 미구현이다. DRAM은 기존 64B
-expanded-window + 큰 자연 정렬 power-of-two Get mock을 사용한다. Producer
-adapter는 IB commit/lifetime 연결만 제공하며 실제 CU output formatting은 후속이다.
-물리 SRAM/ECC/bank timing과 합성 후 Fmax는 검증하지 않았다.
-
-Aligned fill은 one-write-per-cycle 직접 경로다. Unaligned crossing raw beat는
-두 masked write를 ACK하므로 한 physical write port에서 해당 beat가 두 cycle을
-차지한다. 65 raw beat의 예는 128 write다. Cross-beat gather는 구현하지 않았고,
-unaligned sustained 64B/cycle 또는 shared-port aggregate 128B/cycle을 주장하지
-않는다. 독립 aligned profile의 실제 dual-source accept/full-beat cycle 수는 최종
-실행 로그로 보고한다. 이번 system profile은 실제 dual-source 동시 accept 1회,
-두 OCM의 64B full beat 동시 수락 64 cycle을 기록했다. 기존 직접 engine profile도
-64 cycle을 기록했다. Unaligned fill의 134 cycle은 4096/134 = 약 30.57B/cycle이며
-두 segment의 dispatch/completion overhead를 포함한다. 128개 write의 유효 payload
-평균은 32B/write다. Shared profile은 충돌 직렬화와 정확성만 확인한다.
-
-전체 `sbt 'Test / compile'`은 실제로 31개 main Scala source를 컴파일하려다
-다음 기존 오류 4건으로 exit 1이었다. DMA 선별 compile과 4개 test suite가 통과한
-것이며 전체 build 성공을 주장하지 않는다. 해당 top-level 파일들은 수정하지 않았다.
-
-```text
-src/main/scala/EdgeNPUTop.scala:8:  not found: type MacUnit
-src/main/scala/EdgeNPUTop.scala:9:  not found: type MXU_16
-src/main/scala/EdgeNPUTop.scala:10: not found: type DataOrchUnit_16
-src/main/scala/npu/core/Sequencer.scala:28: value out_enable is not a member of ...
+```sh
+sbt 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))' \
+  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala","ReviewProbe.scala").contains(f.getName)))' \
+  'testOnly npu.dma.ReviewProbe'
 ```
 
-Production 통합 시 OCM은 drained/reset 상태에서 이 credit owner에 연결하고,
-이 profile의 occupancy 변경을 memory accept/consume/discard 통지로 일관되게
-연결해야 한다. 다른 local writer가 있는 OCM의 occupancy adapter 및 실제
-controller/RF port 연결은 해당 소유자의 후속 통합 대상이다. 본 harness는 DMA
-write 및 완료 chunk 소비를 모델링하며 실제 controller 구현을 검증하지 않는다.
+**exit 1, 0 PASS / 2 FAIL / 0 skipped.** 첫 테스트는 32 cycle 동안 WB done이
+없었다. 둘째는 닫힌 writer에 commit되어 IbPageTable assertion이 발생했다.
+원본 실행은 [dma-review-before.log](dma-review-before.log)에 보존했다.
+최초 sandbox 실행은 `~/.sbt/boot/sbt.boot.lock` 접근 거부로 launcher 단계에서
+실패했으며, 캐시 접근 권한을 얻어 위 실제 재현을 실행했다. 이 launcher 실패를
+RTL 테스트 결과에 합산하지 않는다.
 
-최종 HEAD는 시작과 동일한 c75da8b5c62927998ab6d676c8d2b9599c3d7909이며,
-공유 branch push/PR은 수행하지 않았다.
+## 원인과 수정
+
+1. **Release와 독립 refill 교착:** 기존 wrapper가 모든 pageCommand에 신규
+   ingress/admission hold를 적용하고 scheduler의 모든 OCM entry drain을 기다렸다.
+   Release는 lease 변경만 하므로 fence를 해당 context/epoch/logicalId의 staged,
+   active, completed OCM 참조와 page의 approved reader로 좁혔다. 무관한 ingress,
+   staged admission, dispatch, OCM consume는 계속 진행한다. Release와 같은 cycle의
+   새 matching ingress는 대기하며, 기존 staged old consumer는 먼저 끝낸다.
+   identity 단위로 보수적으로 보호하므로 같은 논리 object의 다른 page도 기다릴
+   수 있다. Allocate/Invalidate/Rebind의 전체 drain, generation, writer completion,
+   alias/lifetime 검사는 유지했다. 전체 drained를 강제로 true로 만들지 않았다.
+2. **Publication/close 사이 중복 fill:** 기존 `!hit && writerOpen`은 IB lease가
+   없는 valid page까지 fill 대상으로 잡았다. 이제 `!pageValid && writerOpen`이
+   필요하다. `consumers=0` 할당도 그대로 합법이며, published page의 readable DRAM
+   fallback은 `fill=false`로 OCM에만 공급한다. 추가 대기 cycle, assertion 삭제,
+   강제 lease 부여 없이 writer close와 같은 cycle의 dispatch도 안전하다.
+3. **미예약 held admission:** 기존 locked는 최신 full/enabled/credit을 우회했다.
+   매 cycle eligibility를 재검사하고 fire 전 부적격 target은 staged payload를
+   보존한 채 선택에서 제외한다. 다른 eligible target은 진행한다. 이 내부 offer는
+   eligibility-qualified Decoupled이며, eligible stall 동안 payload를 유지한다.
+   Scheduler와 engine은 동일 handshake를 사용한다. 유일한 예약/RR advance는
+   engine.refill.fire이다. 이미 fire한 continuation은 full/hungry/enable 변화와
+   독립적으로 기존 예약을 사용한다.
+4. **UB/WB 실제 용량:** System/Scheduler 통합 기본 profile은 UB/WB 각각
+   16384B·4 chunk entries(CWC, PLC0/1/2), QB/FB/NB는 기존 prototype 8192B·2다.
+   per-target capacity와 ring wrap을 적용하고 IO counter 폭만 최대값을 사용한다.
+   `DmaSchedulerParams()`의 명시적 8192B/2-entry 소형 테스트 profile도 유지했다.
+
+Credit 소유자는 scheduler 하나다. Refill.fire에서 4096B+entry 1개 예약,
+OCM payload accept에서 reserve→buffered, done ACK에서 unused reserve만 해제,
+정상 consume에서 buffered/entry 반환, error는 matching discardCommit 후 반환한다.
+Release 자체가 OCM credit을 해제하지 않는다.
+
+## 회귀 구성
+
+`dma-arbiter-test`는 `ReviewProbe.scala`를 파일 필터와 명시적 testOnly 목록에
+추가했다. 원문 두 probe는 다음 정상 driver/scoreboard로 강화했다.
+
+- WB 완료 → UB/WB consume → Release ACK가 timeout 내 각각 한 번 발생한다.
+  PageCommand.valid는 handshake에서만 내리고 ACK도 검사한다.
+- 두 OCM의 독립 기대 byte trace, durable IB write 정확히 1회/64B,
+  두 번째 accepted plan.fill=false, generation=1/coverage=0xf 불변을 검사한다.
+- Release와 새 matching/unrelated ingress의 같은-cycle 경합을 검사한다.
+  Matching 요청은 handshake 전 대기 후 invalid IB-only 오류를 명시적으로 받으며,
+  무관한 WB는 진행한다. 어떠한 요청도 cancel하지 않는다.
+- UB/WB 각각 네 4096B refill을 consume 없이 보유하고 다섯 번째는 차단한다.
+  UB 소비가 WB credit을 반환하지 않으며 각 target 하나 소비 후 정확히 한 번
+  새 admission한다. Aux capacity는 8192B로 남는다.
+
+기존 hold 단위 테스트는 full/disabled에서도 예약되던 잘못된 기대를 제거했다.
+Full과 disabled를 따로 검사하고, 다른 target 진행/복구 후 원래 identity의
+단 한 번 예약을 검사한다. 기존 4096B free 경계, continuation full 무시,
+consume+commit 동시 accounting, staged old-consumer Release, partial publication,
+unaligned repacking, dual-sink exactly-once, retain/rebind 회귀는 유지한다.
+
+## 중간 집중 실행
+
+수정 중 `ReviewProbe`와 `DmaSourceSchedulerTest` 집중 실행은 exit 1,
+6 PASS / 1 FAIL이었다. Source/admission 4개, 중복 fill 및 UB/WB capacity 2개는
+통과했다. Release 테스트가 호출한 consume helper 내부 clock에서 command가
+실제로 handshake했는데 driver가 이를 세지 않아 commands=0으로 실패했다.
+RTL 교착을 통과로 처리한 것이 아니며, consume 동안에도 모든 clock의 handshake를
+관찰하도록 정상 driver를 고쳤다. 두 번째 payload와 ACK를 임의 cycle 지연으로
+회피하지 않았다. [집중 실행 log](dma-review-focused.log)에 실패를 보존했다.
+이 중간 숫자는 최종 pass 집계와 합산하지 않는다.
+
+## 최종 실행
+
+소스를 고정한 뒤 아래 명령을 실제 실행했다. 최종 **5 suite, 40 PASS /
+0 FAIL / 0 errors / 0 skipped**다. 과거 36 PASS나 중간 실행 결과를 재사용하지 않았다.
+
+| 명령 | 실제 exit / 결과 |
+| --- | --- |
+| `make -j1 dma-read-test dma-read-compile dma-arbiter-test RTL_SBT=sbt` | **0**; AG 18 + Arbiter 관련 22 PASS, DMA compile PASS |
+| `sbt 'Test / compile'` | **1**; main compile의 기존 top-level 오류 4건. 신규 DMA 오류는 보고되지 않음 |
+| `git diff --check` | **0**, PASS |
+
+| 최종 suite | PASS | FAIL | errors | skipped | suite 시간 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `DmaReadTest` | 18 | 0 | 0 | 0 | 761.013s |
+| `DmaSourceSchedulerTest` | 4 | 0 | 0 | 0 | 4.303s |
+| `DmaReadArbiterTest` | 9 | 0 | 0 | 0 | 737.506s |
+| `IbPageLifecycleTest` | 5 | 0 | 0 | 0 | 342.501s |
+| `ReviewProbe` | 4 | 0 | 0 | 0 | 445.650s |
+
+Sbt 프로세스는 순차 실행했다. 한 sbt 내부 suite들은 병행 실행되므로 위 시간을
+합쳐 wall time으로 해석하지 않는다. 테스트 결과 XML의 모든 timestamp는 이번
+2026-11-08 실행이다. 고정한 main DMA 9개 + test 4개 source SHA256이 전체 실행
+후에도 동일함을 확인했다. [실제 runner log](dma-review-validation.log),
+[XML 기반 집계·case 이름·hash](dma-review-summary.json),
+[전체 compile log](dma-review-full-compile.log)에 근거를 보존했다.
+Console log의 줄 끝 whitespace만 정규화했다.
+
+최종 ReviewProbe에서 UB와 WB 각각 16384B/4 entries를 실제로 채웠고,
+다섯 번째 요청은 staged 상태에서 예약 0B로 대기했다. 한 target의 4096B 소비는
+그 target의 다음 요청만 한 번 승인했다. 마지막 consume 후 각각 free=16384B,
+aux targets는 free=8192B였다. Published/unleased 64B page는 두 OCM에 정확한
+byte trace를 전달하면서 IB durable write는 1회/64B만 발생했다. 두 번째 plan은
+fill=false, coverage=0xf와 generation=1을 유지했다. Release 명령/ACK와 두
+refill done은 정상 driver에서 각각 한 번이었다. 기존 staged old-consumer
+Release 회귀도 통과했다.
+
+기존 회귀의 이번 측정: 0x1010+4096B는 4080/16B 두 segment, 65 raw beats,
+128 compact masked commits, no-stall 134 simulation cycles다. maxGet=128의
+aligned 4096B는 1 segment/32 Gets/64 beats/1 chunk last였다. System 독립 port
+profile에서 dual-source accept 1 cycle과 simultaneous full-beat 64 cycles를
+관찰했다. 이는 해당 simulation profile 결과이며 물리 timing 보장이 아니다.
+Output→input retain/rebind의 A/B 반복 전환도 DRAM 재fill 없이 통과했다.
+
+전체 compile 실패는 다음 기존 4건으로 한정됐다. 무관한 top-level 파일은 수정하지
+않았다. 전체 build나 나머지 non-DMA regression이 통과했다고 주장하지 않는다.
+
+```text
+EdgeNPUTop.scala:8   not found: type MacUnit
+EdgeNPUTop.scala:9   not found: type MXU_16
+EdgeNPUTop.scala:10  not found: type DataOrchUnit_16
+npu/core/Sequencer.scala:28  value out_enable is not a member of ...
+```
+
+최종 HEAD도 `c3d43201bb5acc58e845fc4bd068ba47073a4cea`다. Push/PR은 수행하지 않았다.
+
+## 이번 변경 파일과 연결 경계
+
+| 파일 | 후속 수정 |
+| --- | --- |
+| `src/main/scala/npu/dma/DmaReadEngine.scala` | Release identity별 active fence, 독립 refill 허용, published page fill 금지 |
+| `src/main/scala/npu/dma/DmaReadScheduler.scala` | scoped completed ledger fence, eligible held admission, target별 용량/entry/ring limit |
+| `src/main/scala/npu/dma/DmaReadSystem.scala` | Release/파괴적 control hold 분리, UB/WB integrated 기본 profile |
+| `src/main/scala/npu/dma/IbPageTable.scala` | Release의 reader/동시 acquire 검사; destructive writer/global fence 유지 |
+| `src/test/scala/DmaReadScheduler_Test.scala` | full와 disabled held offer의 잘못된 기대 수정 |
+| `src/test/scala/ReviewProbe.scala` | 원문 재현을 강화한 네 개의 정식 regression |
+| `Makefile` | ReviewProbe 파일과 suite를 dma-arbiter-test에 명시 |
+| `docs/DmaRead.md`, 이 보고서 및 dma-review-* 결과물 | 실제 계약, 실행 근거와 source hash |
+
+새 controller/ABI port는 추가하지 않았다. 기존 `requests/status/consume/discardCommit`,
+`pageCommand/pageResult`, `producerWrite/producerResult`, `nextReadRequest/permit/acceptedPlan`
+계약과 소유자를 재사용한다. Target별 설정만 elaboration parameter로 확장했다.
+실제 DRAM/TL은 `dram.request/response`, IB backend는 `wordRead/wordResponse/fill`에
+후속 연결한다. `fill.ready`는 durable commit이며 producer input acceptance와 다르다.
+실제 IP, 물리 SRAM bank timing, 합성 Fmax, 타 팀 OCM/RF/compute 통합은 검증하지
+않았고, 이 수정으로 새로운 64B/128B timing 보장을 주장하지 않는다.

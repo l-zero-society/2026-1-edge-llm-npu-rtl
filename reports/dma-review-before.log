@@ -1,0 +1,42 @@
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Compile / unmanagedSources
+[info] The new value will be used by Compile / bspBuildTargetSourcesItem, Compile / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Test / unmanagedSources
+[info] The new value will be used by Test / bspBuildTargetSourcesItem, Test / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] compiling 1 Scala source to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/test-classes ...
+[info] done compiling
+Assertion failed
+    at IbPageTable.scala:115 assert(s.allocated && s.writerOpen && w.generation === s.metadata.generation)
+[info] ReviewProbe:
+[info] - should allow an independent WB refill to unblock consumption while an unrelated page release waits *** FAILED ***
+[info]   s.dones.exists(((x$2: npu.dma.DmaReadTestModel.Done) => x$2.id.refill.==(2))) was false WB did not deliver; UB cannot be consumed until WB is ready (ReviewProbe.scala:24)
+[info] - should not issue a second write into a page whose DRAM fill writer just closed *** FAILED ***
+[info]   chiseltest.ChiselAssertionError: An assertion in DmaReadHarness failed.
+[info] Please consult the standard output for more details.
+[info]   at chiseltest.internal.AccessCheck.simulationStep(AccessCheck.scala:180)
+[info]   at chiseltest.internal.SimController.$anonfun$scheduler$1(SimController.scala:59)
+[info]   at chiseltest.internal.Scheduler.doStep(Scheduler.scala:377)
+[info]   at chiseltest.internal.Scheduler.stepThread(Scheduler.scala:329)
+[info]   at chiseltest.internal.SimController.step(SimController.scala:103)
+[info]   at chiseltest.package$testableClock.step(package.scala:400)
+[info]   at npu.dma.DmaReadTestModel$Sim.tick(DmaRead_Test.scala:296)
+[info]   at npu.dma.DmaReadTestModel$Sim.waitFor(DmaRead_Test.scala:300)
+[info]   at npu.dma.DmaReadTestModel$Sim.finish(DmaRead_Test.scala:390)
+[info]   at npu.dma.DmaReadTestModel$Sim.checkBytes(DmaRead_Test.scala:397)
+[info]   ...
+[info] Run completed in 31 seconds, 679 milliseconds.
+[info] Total number of tests run: 2
+[info] Suites: completed 1, aborted 0
+[info] Tests: succeeded 0, failed 2, canceled 0, ignored 0, pending 0
+[info] *** 2 TESTS FAILED ***
+[error] Failed tests:
+[error] 	npu.dma.ReviewProbe
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 34 s, completed 2026. 11. 8. 오후 5:56:56

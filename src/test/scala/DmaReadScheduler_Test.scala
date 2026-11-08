@@ -101,8 +101,8 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
     }
   }
 
-  it should "hold an offered admission descriptor and reserve nothing until refill fire" in {
-    test(new DmaReadScheduler(p)) { d =>
+  it should "recheck full and enabled before reserving a held admission without blocking other targets" in {
+    test(new DmaReadScheduler(p, DmaSchedulerParams())) { d =>
       d.io.admissionPause.poke(false.B);d.io.holdNewRequests.poke(false.B)
       d.io.controlCommand.valid.poke(false.B);d.io.refill.ready.poke(false.B)
       for(src<-0 until 2) {
@@ -127,16 +127,31 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
       request(0,77)
       d.io.refill.valid.expect(true.B);val held=d.io.refill.bits.peek()
       d.clock.step() // lock the current offer
-      d.io.status(0).full.poke(true.B);d.io.status(0).enabled.poke(false.B)
-      request(1,88)
-      for(_<-0 until 16) {
-        d.io.refill.valid.expect(true.B);d.io.refill.bits.expect(held)
+      // Full alone invalidates this unreserved offer, even with backend ready.
+      d.io.status(0).full.poke(true.B);d.io.refill.ready.poke(true.B)
+      for(_<-0 until 8) {
+        d.io.refill.valid.expect(false.B);d.clock.step()
         d.io.credit(0).reservedBytes.expect(0.U);d.io.credit(0).entriesUsed.expect(0.U)
-        d.clock.step()
       }
-      d.io.refill.ready.poke(true.B);d.clock.step()
-      d.io.credit(0).reservedBytes.expect(4096.U);d.io.credit(0).entriesUsed.expect(1.U)
-      d.io.refill.bits.refillId.expect(88.U)
+      request(1,88)
+      d.io.refill.valid.expect(true.B);d.io.refill.bits.refillId.expect(88.U);d.clock.step()
+      d.io.credit(1).reservedBytes.expect(4096.U);d.io.credit(1).entriesUsed.expect(1.U)
+      // Disabled alone must have the same effect. The original identity stays staged.
+      d.io.status(0).full.poke(false.B);d.io.status(0).enabled.poke(false.B)
+      for(_<-0 until 8) {
+        d.io.refill.valid.expect(false.B);d.clock.step()
+        d.io.credit(0).reservedBytes.expect(0.U);d.io.credit(0).entriesUsed.expect(0.U)
+      }
+      request(2,99)
+      d.io.refill.bits.refillId.expect(99.U);d.clock.step()
+      d.io.credit(2).reservedBytes.expect(4096.U)
+      d.io.status(0).enabled.poke(true.B)
+      d.io.refill.valid.expect(true.B);d.io.refill.bits.expect(held);d.clock.step()
+      for(_<-0 until 8) {
+        d.io.refill.valid.expect(false.B);d.clock.step()
+        d.io.credit(0).reservedBytes.expect(4096.U);d.io.credit(0).entriesUsed.expect(1.U)
+        d.io.credit(0).freeBytes.expect(4096.U)
+      }
     }
   }
 }

@@ -4,7 +4,8 @@ import chisel3._
 import chisel3.util._
 
 /** Metadata/coverage owner. Physical storage lives behind the durable write ACK.
-  * Control is externally drained; FinishWriter also needs producer ACK drain.
+  * Destructive control is globally drained; Release has a scoped consumer fence.
+  * FinishWriter also needs producer ACK drain.
   */
 class IbPageTable(p: DmaReadParams) extends Module {
   val io = IO(new Bundle {
@@ -26,7 +27,14 @@ class IbPageTable(p: DmaReadParams) extends Module {
   io.result.valid := resultValid; io.result.bits := result
   when(io.result.fire) { resultValid := false.B }
   val finish = io.command.bits.op === IbPageOp.FinishWriter.U
-  io.command.ready := !resultValid && io.writersDrained && (finish || io.controlDrained)
+  val releaseLease = io.command.bits.op === IbPageOp.Release.U
+  // Release neither retags storage nor touches writer ownership/coverage. It
+  // needs the scoped consumer fence and this page's approved readers drained.
+  val releaseReady = io.controlDrained &&
+    (io.command.bits.page >= p.cachePages.U || pages(io.command.bits.page).readers === 0.U) &&
+    !(io.acquire.valid && io.acquire.bits.page === io.command.bits.page)
+  io.command.ready := !resultValid && Mux(releaseLease, releaseReady,
+    io.writersDrained && (finish || io.controlDrained))
   when(io.command.fire) {
     val c = io.command.bits
     val old = pages(c.page)
