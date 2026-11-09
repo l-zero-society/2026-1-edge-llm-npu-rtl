@@ -2,6 +2,9 @@
 
 # Override for local sbt: make quant-test RTL_SBT=sbt
 RTL_SBT ?= docker exec -e MAKEFLAGS lzero_rtl_env sbt
+# Optional simulator selection; default remains the existing Treadle profile.
+DMA_TEST_BACKEND ?= treadle
+export DMA_TEST_BACKEND
 DMA_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))'
 VPU1_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(f => Set("VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala").contains(f.getName)))'
 COMPUTE_SOURCES = 'set Compile / unmanagedSources ~= (_.filter(f => Set("MXU.scala", "Orch.scala", "Accum.scala", "ComputeTimer.scala", "TPU.scala", "Transposer.scala", "ZeroPadder.scala", "Compactor.scala", "LutProgrammingController.scala", "VPU1Control.scala", "GPALU.scala", "QuantActUnit.scala", "UniversalLUT.scala", "NormUnit.scala", "Rope.scala", "LineParamOcm.scala", "Ocm.scala", "VPU.scala", "Comp.scala").contains(f.getName)))'
@@ -106,7 +109,7 @@ param-ocm-test:
 production-compile:
 	$(RTL_SBT) $(COMPUTE_SOURCES) compile
 
-.PHONY: dma-read-test dma-read-compile dma-arbiter-test
+.PHONY: dma-read-test dma-read-compile dma-arbiter-test dma-static-test
 dma-read-test:
 	$(RTL_SBT) $(DMA_SOURCES) \
 	  'set Test / unmanagedSources ~= (_.filter(_.getName == "DmaRead_Test.scala"))' \
@@ -117,8 +120,13 @@ dma-read-compile:
 
 dma-arbiter-test:
 	$(RTL_SBT) $(DMA_SOURCES) \
-	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "DmaReadScheduler_Test.scala", "IbPageLifecycle_Test.scala", "ReviewProbe.scala").contains(f.getName)))' \
-	  'testOnly npu.dma.DmaSourceSchedulerTest npu.dma.DmaReadArbiterTest npu.dma.IbPageLifecycleTest npu.dma.ReviewProbe'
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "DmaReadScheduler_Test.scala", "IbPageLifecycle_Test.scala", "ReviewProbe.scala", "ArbFenceReview.scala").contains(f.getName)))' \
+	  'testOnly npu.dma.DmaSourceSchedulerTest npu.dma.DmaReadArbiterTest npu.dma.IbPageLifecycleTest npu.dma.ReviewProbe npu.dma.ArbFenceReview'
+
+dma-static-test:
+	$(RTL_SBT) $(DMA_SOURCES) \
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "StaticScratchpad_Test.scala", "NormSpill_Test.scala", "IbBankAdapter_Test.scala").contains(f.getName)))' \
+	  'testOnly npu.dma.StaticScratchpadTest npu.dma.StaticMapContractTest npu.dma.NormSpillTest npu.dma.IbBankAdapterTest npu.dma.BankedReadIntegrationTest'
 
 zero-padder-test:
 	$(RTL_SBT) \

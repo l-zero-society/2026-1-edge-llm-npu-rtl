@@ -1,0 +1,20 @@
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] compiling 35 Scala sources to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/classes ...
+[error] /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/src/main/scala/EdgeNPUTop.scala:8:41: not found: type MacUnit
+[error]   ChiselStage.emitSystemVerilogFile(new MacUnit(), Array("--target-dir", "generated"))
+[error]                                         ^
+[error] /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/src/main/scala/EdgeNPUTop.scala:9:41: not found: type MXU_16
+[error]   ChiselStage.emitSystemVerilogFile(new MXU_16(), Array("--target-dir", "generated"))
+[error]                                         ^
+[error] /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/src/main/scala/EdgeNPUTop.scala:10:41: not found: type DataOrchUnit_16
+[error]   ChiselStage.emitSystemVerilogFile(new DataOrchUnit_16(), Array("--target-dir", "generated"))
+[error]                                         ^
+[error] /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/src/main/scala/npu/core/Sequencer.scala:28:24: value out_enable is not a member of chisel3.Bundle{val in_scalar: chisel3.UInt; val in_valid: chisel3.Bool; val clear: chisel3.Bool; val out_vec: chisel3.Vec[chisel3.UInt]}
+[error]   io.out_vec := Mux(io.out_enable, shift_reg, Seq.fill(16)(0.U(8.W)))
+[error]                        ^
+[error] four errors found
+[error] (Compile / compileIncremental) Compilation failed
+[error] Total time: 4 s, completed 2026. 11. 9. 오전 4:58:04

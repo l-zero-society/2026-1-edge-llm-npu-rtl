@@ -1,0 +1,545 @@
+{
+  "date": "2026-11-09",
+  "timezone": "Asia/Seoul",
+  "head": "41d0d8bb1b62ae5334cd7cef80fd85170bf6e985",
+  "branch": "feat/tpu-rocc-driver",
+  "backend": "Verilator 5.046 (explicit DMA_TEST_BACKEND=verilator)",
+  "seed": "0x4c5a2026",
+  "baseline": {
+    "suite": "ArbFenceReview original",
+    "passed": 0,
+    "failed": 1,
+    "skipped": 0,
+    "exit": 1,
+    "log": "dma-static-baseline.log"
+  },
+  "focused": {
+    "directAfterExtraction": 1,
+    "strengthenedFenceTreadle": 1,
+    "gemmFusionDirectMergeVerilator": 4,
+    "staticNormBankFence": 15,
+    "nbLocalCreditRowSource": 13,
+    "normAndInputBackpressure": 5,
+    "bankedSplit": 1,
+    "cancelledTreadleExit": 143,
+    "cancelledSelectionCount": 4,
+    "concurrentConfigBefore": {
+      "passed": 0,
+      "failed": 1,
+      "exit": 1,
+      "log": "dma-static-config-before.log"
+    },
+    "concurrentConfigAfter": {
+      "passed": 1,
+      "failed": 0,
+      "exit": 0,
+      "log": "dma-static-config-after.log"
+    }
+  },
+  "commands": [
+    {
+      "command": "DMA_TEST_BACKEND=verilator make -j1 dma-read-test dma-read-compile dma-arbiter-test dma-static-test RTL_SBT=sbt",
+      "exit": 0,
+      "log": "dma-static-final.log"
+    },
+    {
+      "command": "sbt 'Test / compile'",
+      "exit": 1,
+      "log": "dma-static-full-compile.log",
+      "baselineErrors": [
+        "EdgeNPUTop.scala:8 MacUnit",
+        "EdgeNPUTop.scala:9 MXU_16",
+        "EdgeNPUTop.scala:10 DataOrchUnit_16",
+        "npu/core/Sequencer.scala:28 out_enable"
+      ]
+    },
+    {
+      "command": "git diff --check",
+      "exit": 0
+    }
+  ],
+  "totals": {
+    "passed": 56,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": [
+    {
+      "suite": "npu.dma.DmaReadTest",
+      "tests": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 97.45,
+      "timestamp": "2026-11-09T04:53:19",
+      "cases": [
+        {
+          "name": "DMA read path should align expanded DRAM words and IB lanes with poisoned padding and exact logical bytes",
+          "seconds": 8.241
+        },
+        {
+          "name": "DMA read path should traverse GEMM rows passes K tails and compact row cache using canonical addresses",
+          "seconds": 5.582
+        },
+        {
+          "name": "DMA read path should keep W1 W2 cursors independent across explicit fusion phases and weight stride jumps",
+          "seconds": 5.408
+        },
+        {
+          "name": "DMA read path should supply linear direct Quant Freq and NormSpill payloads with configured repeat boundaries",
+          "seconds": 5.201
+        },
+        {
+          "name": "DMA read path should supply weight working sets once in local cache mode and repeat them in STREAM mode",
+          "seconds": 5.323
+        },
+        {
+          "name": "DMA read path should commit real fill bytes before hits and preserve gaps partial pages and epochs",
+          "seconds": 5.178
+        },
+        {
+          "name": "DMA read path should split hit miss and mapping boundaries without early chunk last or filling padding",
+          "seconds": 5.236
+        },
+        {
+          "name": "DMA read path should reject invalid IB only data without a fabricated DRAM fallback",
+          "seconds": 5.076
+        },
+        {
+          "name": "DMA read path should overlap independent full width returns and reserve a target through delayed fill commit",
+          "seconds": 5.321
+        },
+        {
+          "name": "DMA read path should advance once at accepted dispatch and preserve a latched issue through long backend stalls",
+          "seconds": 5.11
+        },
+        {
+          "name": "DMA read path should continue a partially issued tile across chunks and backend transfer limits",
+          "seconds": 5.247
+        },
+        {
+          "name": "DMA read path should arbitrate conflicting IB read and fill commands on a shared backing port",
+          "seconds": 5.18
+        },
+        {
+          "name": "DMA read path should merge dense compact and non power of two tiles without crossing a pass",
+          "seconds": 5.279
+        },
+        {
+          "name": "DMA read path should fetch 65 expanded words for an unaligned 4KiB payload and fill only valid bytes",
+          "seconds": 5.239
+        },
+        {
+          "name": "DMA read path should keep whole raw words and one logical last with a small maximum TL Get profile",
+          "seconds": 5.371
+        },
+        {
+          "name": "DMA read path should preview five independent targets before permits and accept each winner only once",
+          "seconds": 5.188
+        },
+        {
+          "name": "DMA read path should refresh a waiting source preview on commit while preserving epoch and IB only rules",
+          "seconds": 5.22
+        },
+        {
+          "name": "DMA read path should use a fully published 512B tail page then DRAM for the nonresident range",
+          "seconds": 5.05
+        }
+      ],
+      "passed": 18
+    },
+    {
+      "suite": "npu.dma.DmaSourceSchedulerTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 18.156,
+      "timestamp": "2026-11-09T04:55:08",
+      "cases": [
+        {
+          "name": "DMA source scheduler should apply P0 P1 P2 and advance only on actual accepts with independent sources",
+          "seconds": 4.331
+        },
+        {
+          "name": "DMA source scheduler should round robin equal priorities independently across all five targets",
+          "seconds": 3.018
+        },
+        {
+          "name": "DMA source scheduler should promote an aged prefetch under continuous P0 and preserve age across source changes",
+          "seconds": 7.257
+        },
+        {
+          "name": "DMA source scheduler should recheck full and enabled before reserving a held admission without blocking other targets",
+          "seconds": 3.55
+        }
+      ],
+      "passed": 4
+    },
+    {
+      "suite": "npu.dma.DmaReadArbiterTest",
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 81.19,
+      "timestamp": "2026-11-09T04:55:08",
+      "cases": [
+        {
+          "name": "DMA scheduler integration should drain each source while the other stalls and accept two sources after independent admissions",
+          "seconds": 16.966
+        },
+        {
+          "name": "DMA scheduler integration should allow IB during long DRAM stalls and DRAM during long IB stalls",
+          "seconds": 12.195
+        },
+        {
+          "name": "DMA scheduler integration should reserve once and finish continuations despite full hungry and enable changes",
+          "seconds": 9.324
+        },
+        {
+          "name": "DMA scheduler integration should keep tail full thresholds chunk exhaustion and simultaneous consume commit accounting exact",
+          "seconds": 9.349
+        },
+        {
+          "name": "DMA scheduler integration should preserve buffered error bytes until confirmed discard and wait for every producer page",
+          "seconds": 6.751
+        },
+        {
+          "name": "DMA scheduler integration should apply the 4096B free threshold even to tail requests and release only consumed occupancy",
+          "seconds": 6.772
+        },
+        {
+          "name": "DMA scheduler integration should retain partially delivered error data until an identity matched discard commit",
+          "seconds": 6.31
+        },
+        {
+          "name": "DMA scheduler integration should admit all five staged targets fairly without a source busy global head of line",
+          "seconds": 6.809
+        },
+        {
+          "name": "DMA scheduler integration should drain a staged old consumer before releasing its page without a control hold deadlock",
+          "seconds": 6.714
+        }
+      ],
+      "passed": 9
+    },
+    {
+      "suite": "npu.dma.IbPageLifecycleTest",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 45.568,
+      "timestamp": "2026-11-09T04:55:08",
+      "cases": [
+        {
+          "name": "IB page publication and operation handoff should publish a 4096B page only after every unique lane despite duplicate small refills",
+          "seconds": 14.907
+        },
+        {
+          "name": "IB page publication and operation handoff should compact every head offset and tail to page zero and replay only fully published payloads",
+          "seconds": 7.336
+        },
+        {
+          "name": "IB page publication and operation handoff should hold the second derived write without duplicate OCM data or early publication",
+          "seconds": 8.14
+        },
+        {
+          "name": "IB page publication and operation handoff should retain output as next input across A B swaps and reject unsafe or stale mutations",
+          "seconds": 7.601
+        },
+        {
+          "name": "IB page publication and operation handoff should arbitrate output and DRAM fill commits and serialize shared IB read write conflicts",
+          "seconds": 7.584
+        }
+      ],
+      "passed": 5
+    },
+    {
+      "suite": "npu.dma.ReviewProbe",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 46.203,
+      "timestamp": "2026-11-09T04:55:08",
+      "cases": [
+        {
+          "name": "should allow an independent WB refill to unblock consumption while an unrelated page release waits",
+          "seconds": 17.188
+        },
+        {
+          "name": "should not issue a second write into a page whose DRAM fill writer just closed",
+          "seconds": 9.677
+        },
+        {
+          "name": "should serialize same-cycle page lease release against matching ingress while admitting unrelated ingress",
+          "seconds": 9.843
+        },
+        {
+          "name": "should retain four 4KiB chunks independently in UB and WB using the integrated profile",
+          "seconds": 9.495
+        }
+      ],
+      "passed": 4
+    },
+    {
+      "suite": "npu.dma.ArbFenceReview",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 29.138,
+      "timestamp": "2026-11-09T04:55:08",
+      "cases": [
+        {
+          "name": "should progress a destructive control after a FinishWriter stalls an unrelated unreserved admission",
+          "seconds": 17.171
+        },
+        {
+          "name": "should keep destructive control fenced behind real reader and consumer lifetime",
+          "seconds": 11.967
+        }
+      ],
+      "passed": 2
+    },
+    {
+      "suite": "npu.dma.StaticScratchpadTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 43.688,
+      "timestamp": "2026-11-09T04:56:39",
+      "cases": [
+        {
+          "name": "should reuse a spilled UB head across three complete passes and switch only after the stalled tail while preserving W1 W2",
+          "seconds": 13.991
+        },
+        {
+          "name": "should commit a one-pass multi-segment row before reusing its pages and clamp the short final row",
+          "seconds": 5.718
+        },
+        {
+          "name": "should map noncontiguous physical pages and leave VPU direct and local reused operands out of row population",
+          "seconds": 6.113
+        },
+        {
+          "name": "should load a retained output as a local UB row with zero new population and zero DRAM requests",
+          "seconds": 6.01
+        },
+        {
+          "name": "should roll a multipage unaligned GEMM head over noncontiguous pages and retire unused capacity in a short last row",
+          "seconds": 6.561
+        },
+        {
+          "name": "should accept simultaneous configuration offers without cancellation or an idle cycle",
+          "seconds": 5.295
+        }
+      ],
+      "passed": 6
+    },
+    {
+      "suite": "npu.dma.StaticMapContractTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 14.791,
+      "timestamp": "2026-11-09T04:56:39",
+      "cases": [
+        {
+          "name": "should detect overflowing windows duplicate slots and overlapping live stream ownership",
+          "seconds": 14.791
+        }
+      ],
+      "passed": 1
+    },
+    {
+      "suite": "npu.dma.NormSpillTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 39.391,
+      "timestamp": "2026-11-09T04:56:39",
+      "cases": [
+        {
+          "name": "should share phase1 and phase2 offsets for NB only without virtual DRAM addressing",
+          "seconds": 15.435
+        },
+        {
+          "name": "should share phase1 and phase2 offsets for NB plus IB tail without virtual DRAM addressing",
+          "seconds": 7.621
+        },
+        {
+          "name": "should share phase1 and phase2 offsets for DRAM without IB without virtual DRAM addressing",
+          "seconds": 7.909
+        },
+        {
+          "name": "should share phase1 and phase2 offsets for multi page IB plus DRAM without virtual DRAM addressing",
+          "seconds": 8.426
+        }
+      ],
+      "passed": 4
+    },
+    {
+      "suite": "npu.dma.IbBankAdapterTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 8.363,
+      "timestamp": "2026-11-09T04:56:39",
+      "cases": [
+        {
+          "name": "should commit independent writers with exact lanes and stable bank backpressure conflict=false",
+          "seconds": 4.986
+        },
+        {
+          "name": "should commit independent writers with exact lanes and stable bank backpressure conflict=true",
+          "seconds": 3.377
+        }
+      ],
+      "passed": 2
+    },
+    {
+      "suite": "npu.dma.BankedReadIntegrationTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 14.788,
+      "timestamp": "2026-11-09T04:56:39",
+      "cases": [
+        {
+          "name": "should commit DRAM fill output and Norm independently into three banks and keep IB read independent",
+          "seconds": 14.788
+        }
+      ],
+      "passed": 1
+    }
+  ],
+  "expectedProtocolAssertionInputs": 3,
+  "metrics": {
+    "ubThreePassFixture": {
+      "row0Bytes": 8192,
+      "row0Passes": 3,
+      "nextRowBytes": 512,
+      "nextRowPasses": 3,
+      "verifiedUbPayloadBytes": 26112,
+      "transitions": 1,
+      "headCapacityBytes": 4096,
+      "lastRowHeadValidBytes": 512,
+      "ubFinalGeneration": 2,
+      "weightGeneration": 1
+    },
+    "normPhase1": [
+      {
+        "layout": "NB only",
+        "localBytes": 64,
+        "ibBytes": 0,
+        "dramBytes": 0,
+        "durable16BCommits": 4,
+        "phase2DmaBytes": 0
+      },
+      {
+        "layout": "NB+IB",
+        "localBytes": 32,
+        "ibBytes": 512,
+        "dramBytes": 0,
+        "durable16BCommits": 34,
+        "phase2DmaBytes": 512
+      },
+      {
+        "layout": "I=0",
+        "localBytes": 32,
+        "ibBytes": 0,
+        "dramBytes": 192,
+        "durable16BCommits": 14,
+        "phase2DmaBytes": 192
+      },
+      {
+        "layout": "multipage",
+        "localBytes": 64,
+        "ibBytes": 4608,
+        "dramBytes": 64,
+        "durable16BCommits": 296,
+        "phase2DmaBytes": 4672
+      }
+    ],
+    "bankFabric": {
+      "cycles": 32,
+      "durableWriteBytes": 3072,
+      "writeBytesPerCycle": 96,
+      "separateReadBytes": 2048,
+      "sameBankCycles": 168
+    },
+    "bankEngine": {
+      "simultaneousDurableBytes": 96,
+      "totalDurableWriteBytes": 128,
+      "ocmPayloadBytes": 128,
+      "separateReadWithTwoWrites": {
+        "readBytes": 64,
+        "writeBytes": 32
+      }
+    },
+    "unaligned4KiB": {
+      "segments": 2,
+      "rawBeats": 65,
+      "compactMaskedCommits": 128,
+      "noStallCycles": 134
+    },
+    "maxGet128": {
+      "segments": 1,
+      "gets": 32,
+      "rawBeats": 64
+    },
+    "capacityBytes": [
+      16384,
+      16384,
+      8192,
+      8192,
+      8192
+    ],
+    "chunkEntries": [
+      4,
+      4,
+      2,
+      2,
+      2
+    ]
+  },
+  "sourceFreezeTime": "2026-11-09T04:53:11.029446+09:00",
+  "sourceSha256": {
+    "src/main/scala/npu/dma/DmaReadEngine.scala": "f3b35e753d74dc8f8776d7adab2bff45402a6a9b8ce8333f3467847c05037e63",
+    "src/main/scala/npu/dma/DmaReadScheduler.scala": "82b3eb578bc9b0eb33b2a4a9a970e258030b487ab2ed9d8dec5dea82fc8ae246",
+    "src/main/scala/npu/dma/DmaReadSystem.scala": "cd7f4fe7ddba1c0b07becdceee018432b3da8fd3b8ee7e25d0de5336371a29bc",
+    "src/main/scala/npu/dma/IbBankWriteAdapter.scala": "6e6184add71ec4d8c2d8d8284136bbf4103d9cc2ca5febe23aaee684b31cae80",
+    "src/main/scala/npu/dma/IbBurstReader.scala": "dc7f9e0fdeb1ee099bb2b94b10e8c7d280a4aee5719034d49f92c99e3415ad03",
+    "src/main/scala/npu/dma/IbCompactWriter.scala": "6567e7a8a944ef414b69ed46f32f0688cb9893027180d6f4d985809f8c0eeb88",
+    "src/main/scala/npu/dma/IbPageTable.scala": "c5ac8b3e1db67664a58082a8b72d1a63294faec8c7b2d3347e3e948f01f8cc18",
+    "src/main/scala/npu/dma/IbPageTypes.scala": "a4f251c24259ce7a16b8d05c379a2976980c1ff135f74f05fd4f201f370c5ad2",
+    "src/main/scala/npu/dma/IbReadFillArbiter.scala": "a4224b0d674536e220883dc451f28808d71b1ba7b3ea6ebff56b6a648a21371e",
+    "src/main/scala/npu/dma/NormSpillResolver.scala": "daa21a8f61d5d0590824d40f4d3bb2e8cc164e356c09a29a2b7a8aef93aa9020",
+    "src/main/scala/npu/dma/OcmCacheMap.scala": "45cce4d5fc7b7a26a7b829cb59c498d14054fd073bb7343d31973dcbb69947e0",
+    "src/main/scala/npu/dma/ReadPatterns.scala": "640cdee38d26c400309164e708b50621d25b5cf852cef85cd2f7b6c11643b23f",
+    "src/main/scala/npu/dma/ReadTypes.scala": "db87e45752ec983c6a44cff2fdeb7f89d131b85938234a51a3e2a88b8bcc56e0",
+    "src/test/scala/ArbFenceReview.scala": "433114054f6e04e143fa3b3bebbefddb4bbefbb9ff4c1c1eaca3ddc1d5656ce4",
+    "src/test/scala/DmaReadScheduler_Test.scala": "80f80de6fcb3b22d5da02fe29baeaf7981711ede1c20264a99d8897cc0c40b26",
+    "src/test/scala/DmaRead_Test.scala": "814e3725ecbf6ad2da100535b6811683ec203fca85774a80668954332a7d8fea",
+    "src/test/scala/IbBankAdapter_Test.scala": "5807604f39e93433d780da8b2e5020d4fa4dbd413178dceea451557e6400756c",
+    "src/test/scala/IbPageLifecycle_Test.scala": "dc2266d280550e981e51126aa88508c4db7b6ade1d97798c52c28c5188f1a70c",
+    "src/test/scala/NormSpill_Test.scala": "ad2aa300759f4983fd6a4f281fc642bde1ec43c2d7c018c5be306824f7975820",
+    "src/test/scala/ReviewProbe.scala": "cedf5f17e7992eb78903ecc279b601eb27934d1c43ac7001ab4fde6f93a0eade",
+    "src/test/scala/StaticScratchpad_Test.scala": "cfc455bb448766c5bfda76028f1b2c676dce2df0853bc4ea1f5983d240d60045"
+  },
+  "limits": [
+    "Real DRAM/TL IP, complete output writer and physical URAM not connected",
+    "No post-synthesis timing/Fmax guarantee",
+    "96B/cycle is a bank-fabric backlog profile, not sustained producer-adapter throughput",
+    "Non-DMA regression blocked by the four baseline main compile errors"
+  ]
+}

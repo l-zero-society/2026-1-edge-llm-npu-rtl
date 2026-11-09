@@ -12,7 +12,7 @@ class IbPageLifecycleTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "publish a 4096B page only after every unique lane despite duplicate small refills" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d)
       s.map()
       s.configure(Config(tiles=16))
@@ -55,7 +55,7 @@ class IbPageLifecycleTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "compact every head offset and tail to page zero and replay only fully published payloads" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d)
       var id=0
       for(offset<-Seq(0,16,32,48); length<-Seq(16,32,48,144)) {
@@ -77,7 +77,7 @@ class IbPageLifecycleTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "hold the second derived write without duplicate OCM data or early publication" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d,stalls=false)
       s.map(canonical=0x1010,bytes=144)
       s.configure(Config(base=0x1010,tileBytes=144,tail=144))
@@ -119,7 +119,7 @@ class IbPageLifecycleTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "retain output as next input across A B swaps and reject unsafe or stale mutations" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d)
       val a=PageSpec(canonical=0x1010,bytes=128,logical=10,consumers=3)
       val b=PageSpec(canonical=0x4010,physical=0x9000,bytes=128,logical=20,
@@ -221,7 +221,7 @@ class IbPageLifecycleTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "arbitrate output and DRAM fill commits and serialize shared IB read write conflicts" in {
-    test(new DmaReadHarness(sharedIbPort=true)) { d =>
+    test(new DmaReadHarness(sharedIbPort=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d,stalls=false)
       s.map(canonical=0x1010,bytes=144)
       val b=PageSpec(canonical=0x4010,physical=0x9000,bytes=128,logical=20,

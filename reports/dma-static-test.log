@@ -1,0 +1,63 @@
+sbt 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))' \
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "StaticScratchpad_Test.scala", "NormSpill_Test.scala", "IbBankAdapter_Test.scala").contains(f.getName)))' \
+	  'testOnly npu.dma.StaticScratchpadTest npu.dma.StaticMapContractTest npu.dma.NormSpillTest npu.dma.IbBankAdapterTest npu.dma.BankedReadIntegrationTest'
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Compile / unmanagedSources
+[info] The new value will be used by Compile / bspBuildTargetSourcesItem, Compile / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Test / unmanagedSources
+[info] The new value will be used by Test / bspBuildTargetSourcesItem, Test / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] compiling 4 Scala sources to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/test-classes ...
+[warn] 127 feature warnings; re-run with -feature for details
+[warn] one warning found
+[info] done compiling
+Assertion failed
+    at OcmCacheMap.scala:54 assert(c.mappedStartAddr(3,0) === 0.U && c.mappedSize(3,0) === 0.U && c.rowBytes(3,0) === 0.U && !end(64))
+[3] %Error: OcmCacheMap.sv:4118: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[info] IbBankAdapterTest:
+[info] - should commit independent writers with exact lanes and stable bank backpressure conflict=false
+[info]   + 32 cycles: 3072 durable write bytes (96B/cycle) plus 2048 read-port bytes; independent banks
+[info] - should commit independent writers with exact lanes and stable bank backpressure conflict=true
+[info]   + same-bank contention: 168 cycles, no sustained 96B claim
+Assertion failed
+    at OcmCacheMap.scala:64 assert(pg.metadata.canonicalStart === c.mappedStartAddr + offset && pg.metadata.validBytes === length)
+Assertion failed
+    at OcmCacheMap.scala:66 for (j <- 0 until i) { when(j.U < c.pageCount) { assert(c.pageSlots(i) =/= c.pageSlots(j)) } }
+[3] %Error: OcmCacheMap.sv:4254: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[3] %Error: OcmCacheMap.sv:4262: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[info] BankedReadIntegrationTest:
+[info] - should commit DRAM fill output and Norm independently into three banks and keep IB read independent
+[info]   + production bank path: 64+16+16=96B committed together; separate 64B IB read plus two 16B commits verified
+Assertion failed: live static windows cannot share allocation ownership
+    at OcmCacheMap.scala:69 assert(c.pageSlots(i) =/= windows(s).pageSlots(j), "live static windows cannot share allocation ownership")
+[5] %Error: OcmCacheMap.sv:4149: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[info] StaticMapContractTest:
+[info] - should detect overflowing windows duplicate slots and overlapping live stream ownership
+[info]   + Three expected protocol assertions are caught; they are not unexpected regression failures
+[info] StaticScratchpadTest:
+[info] - should reuse a spilled UB head across three complete passes and switch only after the stalled tail while preserving W1 W2
+[info] - should commit a one-pass multi-segment row before reusing its pages and clamp the short final row
+[info] - should map noncontiguous physical pages and leave VPU direct and local reused operands out of row population
+[info] - should load a retained output as a local UB row with zero new population and zero DRAM requests
+[info] - should roll a multipage unaligned GEMM head over noncontiguous pages and retire unused capacity in a short last row
+[info] NormSpillTest:
+[info] - should share phase1 and phase2 offsets for NB only without virtual DRAM addressing
+[info]   + NB only: local=64 IB=0 DRAM=0 committed bytes
+[info] - should share phase1 and phase2 offsets for NB plus IB tail without virtual DRAM addressing
+[info]   + NB plus IB tail: local=32 IB=512 DRAM=0 committed bytes
+[info] - should share phase1 and phase2 offsets for DRAM without IB without virtual DRAM addressing
+[info]   + DRAM without IB: local=32 IB=0 DRAM=192 committed bytes
+[info] - should share phase1 and phase2 offsets for multi page IB plus DRAM without virtual DRAM addressing
+[info]   + multi page IB plus DRAM: local=64 IB=4608 DRAM=64 committed bytes
+[info] Run completed in 39 seconds, 135 milliseconds.
+[info] Total number of tests run: 13
+[info] Suites: completed 5, aborted 0
+[info] Tests: succeeded 13, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.
+[success] Total time: 45 s, completed 2026. 11. 9. 오전 4:47:37

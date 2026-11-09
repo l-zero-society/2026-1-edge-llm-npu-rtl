@@ -1,0 +1,187 @@
+sbt 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))' \
+	  'set Test / unmanagedSources ~= (_.filter(_.getName == "DmaRead_Test.scala"))' \
+	  'testOnly npu.dma.DmaReadTest'
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Compile / unmanagedSources
+[info] The new value will be used by Compile / bspBuildTargetSourcesItem, Compile / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Test / unmanagedSources
+[info] The new value will be used by Test / bspBuildTargetSourcesItem, Test / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] compiling 1 Scala source to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/test-classes ...
+[warn] 80 feature warnings; re-run with -feature for details
+[warn] one warning found
+[info] done compiling
+[info] DmaReadTest:
+[info] DMA read path
+[info] - should align expanded DRAM words and IB lanes with poisoned padding and exact logical bytes
+[info] - should traverse GEMM rows passes K tails and compact row cache using canonical addresses
+[info] - should keep W1 W2 cursors independent across explicit fusion phases and weight stride jumps
+[info] - should supply linear direct Quant Freq and NormSpill payloads with configured repeat boundaries
+[info] - should supply weight working sets once in local cache mode and repeat them in STREAM mode
+[info] - should commit real fill bytes before hits and preserve gaps partial pages and epochs
+[info] - should split hit miss and mapping boundaries without early chunk last or filling padding
+[info] - should reject invalid IB only data without a fabricated DRAM fallback
+[info] - should overlap independent full width returns and reserve a target through delayed fill commit
+[info]   + Observed 64 simultaneous DRAM+IB full-beat cycles (128B/cycle)
+[info] - should advance once at accepted dispatch and preserve a latched issue through long backend stalls
+[info] - should continue a partially issued tile across chunks and backend transfer limits
+[info] - should arbitrate conflicting IB read and fill commands on a shared backing port
+[info] - should merge dense compact and non power of two tiles without crossing a pass
+[info]   + Dense 16x256B and compact 256x16B: each 1 segment / 1 Get / 64 raw beats
+[info] - should fetch 65 expanded words for an unaligned 4KiB payload and fill only valid bytes
+[info]   + 0x1010+4096B: 2 segments, 65 raw beats, 128 compact masked commits, 134 no-stall testbench cycles
+[info] - should keep whole raw words and one logical last with a small maximum TL Get profile
+[info]   + 128B maximum Get profile: 1 segment / 32 Gets / 64 raw beats / 1 chunk last
+[info] - should preview five independent targets before permits and accept each winner only once
+[info] - should refresh a waiting source preview on commit while preserving epoch and IB only rules
+[info] - should use a fully published 512B tail page then DRAM for the nonresident range
+[info]   + Mixed refill: IB 512B + DRAM 3584B, same identity, offsets 96/608, one chunk last and done
+[info] Run completed in 1 minute, 37 seconds.
+[info] Total number of tests run: 18
+[info] Suites: completed 1, aborted 0
+[info] Tests: succeeded 18, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.
+[success] Total time: 103 s (0:01:43.0), completed 2026. 11. 9. 오전 4:54:56
+sbt 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))' compile
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Executing in batch mode. For better performance use sbt's shell
+[info] Defining Compile / unmanagedSources
+[info] The new value will be used by Compile / bspBuildTargetSourcesItem, Compile / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[success] Total time: 0 s, completed 2026. 11. 9. 오전 4:54:59
+sbt 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))' \
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "DmaReadScheduler_Test.scala", "IbPageLifecycle_Test.scala", "ReviewProbe.scala", "ArbFenceReview.scala").contains(f.getName)))' \
+	  'testOnly npu.dma.DmaSourceSchedulerTest npu.dma.DmaReadArbiterTest npu.dma.IbPageLifecycleTest npu.dma.ReviewProbe npu.dma.ArbFenceReview'
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Compile / unmanagedSources
+[info] The new value will be used by Compile / bspBuildTargetSourcesItem, Compile / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Test / unmanagedSources
+[info] The new value will be used by Test / bspBuildTargetSourcesItem, Test / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] compiling 5 Scala sources to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/test-classes ...
+[warn] 163 feature warnings; re-run with -feature for details
+[warn] one warning found
+[info] done compiling
+[info] DmaSourceSchedulerTest:
+[info] DMA source scheduler
+[info] - should apply P0 P1 P2 and advance only on actual accepts with independent sources
+[info] - should round robin equal priorities independently across all five targets
+[info] - should promote an aged prefetch under continuous P0 and preserve age across source changes
+[info]   + P2 promoted after 8 competing accepted opportunities; no wall-clock bound during source stall
+[info] - should recheck full and enabled before reserving a held admission without blocking other targets
+[info] ArbFenceReview:
+[info] - should progress a destructive control after a FinishWriter stalls an unrelated unreserved admission
+[info] - should keep destructive control fenced behind real reader and consumer lifetime
+[info] IbPageLifecycleTest:
+[info] IB page publication and operation handoff
+[info] - should publish a 4096B page only after every unique lane despite duplicate small refills
+[info] - should compact every head offset and tail to page zero and replay only fully published payloads
+[info] - should hold the second derived write without duplicate OCM data or early publication
+[info] - should retain output as next input across A B swaps and reject unsafe or stale mutations
+[info]   + A(input)/B(output) -> B(input)/A(output) -> A(input)/B(output) -> B(input): retained data, zero DRAM refills
+[info] - should arbitrate output and DRAM fill commits and serialize shared IB read write conflicts
+[info]   + Shared IB port: output/fill/read contention serialized; no aggregate bandwidth claim
+[info] ReviewProbe:
+[info] - should allow an independent WB refill to unblock consumption while an unrelated page release waits
+[info] - should not issue a second write into a page whose DRAM fill writer just closed
+[info] - should serialize same-cycle page lease release against matching ingress while admitting unrelated ingress
+[info] - should retain four 4KiB chunks independently in UB and WB using the integrated profile
+[info]   + UB and WB: 4 x 4096B retained, fifth blocked independently, one consume permits exactly one refill
+[info] DmaReadArbiterTest:
+[info] DMA scheduler integration
+[info] - should drain each source while the other stalls and accept two sources after independent admissions
+[info]   + System: 1 dual-source accepts; 64 simultaneous full-beat cycles
+[info] - should allow IB during long DRAM stalls and DRAM during long IB stalls
+[info] - should reserve once and finish continuations despite full hungry and enable changes
+[info] - should keep tail full thresholds chunk exhaustion and simultaneous consume commit accounting exact
+[info] - should preserve buffered error bytes until confirmed discard and wait for every producer page
+[info] - should apply the 4096B free threshold even to tail requests and release only consumed occupancy
+[info] - should retain partially delivered error data until an identity matched discard commit
+[info] - should admit all five staged targets fairly without a source busy global head of line
+[info] - should drain a staged old consumer before releasing its page without a control hold deadlock
+[info] Run completed in 1 minute, 21 seconds.
+[info] Total number of tests run: 24
+[info] Suites: completed 5, aborted 0
+[info] Tests: succeeded 24, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.
+[success] Total time: 88 s (0:01:28.0), completed 2026. 11. 9. 오전 4:56:30
+sbt 'set Compile / unmanagedSources ~= (_.filter(_.getPath.contains("/npu/dma/")))' \
+	  'set Test / unmanagedSources ~= (_.filter(f => Set("DmaRead_Test.scala", "StaticScratchpad_Test.scala", "NormSpill_Test.scala", "IbBankAdapter_Test.scala").contains(f.getName)))' \
+	  'testOnly npu.dma.StaticScratchpadTest npu.dma.StaticMapContractTest npu.dma.NormSpillTest npu.dma.IbBankAdapterTest npu.dma.BankedReadIntegrationTest'
+[info] welcome to sbt 1.12.6 (Homebrew Java 26.0.2.1)
+[info] loading project definition from /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/project
+[info] loading settings for project lzero_pim from build.sbt...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Compile / unmanagedSources
+[info] The new value will be used by Compile / bspBuildTargetSourcesItem, Compile / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] Defining Test / unmanagedSources
+[info] The new value will be used by Test / bspBuildTargetSourcesItem, Test / sources
+[info] Reapplying settings...
+[info] set current project to lzero_pim (in build file:/Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/)
+[info] compiling 4 Scala sources to /Users/mac/LZERO_workspace/2026-1-edge-llm-npu-rtl/target/scala-2.13/test-classes ...
+[warn] 127 feature warnings; re-run with -feature for details
+[warn] one warning found
+[info] done compiling
+Assertion failed
+    at OcmCacheMap.scala:54 assert(c.mappedStartAddr(3,0) === 0.U && c.mappedSize(3,0) === 0.U && c.rowBytes(3,0) === 0.U && !end(64))
+[3] %Error: OcmCacheMap.sv:4118: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[info] IbBankAdapterTest:
+[info] - should commit independent writers with exact lanes and stable bank backpressure conflict=false
+[info]   + 32 cycles: 3072 durable write bytes (96B/cycle) plus 2048 read-port bytes; independent banks
+[info] - should commit independent writers with exact lanes and stable bank backpressure conflict=true
+[info]   + same-bank contention: 168 cycles, no sustained 96B claim
+Assertion failed
+    at OcmCacheMap.scala:64 assert(pg.metadata.canonicalStart === c.mappedStartAddr + offset && pg.metadata.validBytes === length)
+Assertion failed
+    at OcmCacheMap.scala:66 for (j <- 0 until i) { when(j.U < c.pageCount) { assert(c.pageSlots(i) =/= c.pageSlots(j)) } }
+[3] %Error: OcmCacheMap.sv:4254: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[3] %Error: OcmCacheMap.sv:4262: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[info] BankedReadIntegrationTest:
+[info] - should commit DRAM fill output and Norm independently into three banks and keep IB read independent
+[info]   + production bank path: 64+16+16=96B committed together; separate 64B IB read plus two 16B commits verified
+Assertion failed: live static windows cannot share allocation ownership
+    at OcmCacheMap.scala:69 assert(c.pageSlots(i) =/= windows(s).pageSlots(j), "live static windows cannot share allocation ownership")
+[5] %Error: OcmCacheMap.sv:4149: Assertion failed in TOP.OcmCacheMap: 'assert' failed.
+[info] StaticMapContractTest:
+[info] - should detect overflowing windows duplicate slots and overlapping live stream ownership
+[info]   + Three expected protocol assertions are caught; they are not unexpected regression failures
+[info] NormSpillTest:
+[info] - should share phase1 and phase2 offsets for NB only without virtual DRAM addressing
+[info]   + NB only: local=64 IB=0 DRAM=0 committed bytes
+[info] - should share phase1 and phase2 offsets for NB plus IB tail without virtual DRAM addressing
+[info]   + NB plus IB tail: local=32 IB=512 DRAM=0 committed bytes
+[info] - should share phase1 and phase2 offsets for DRAM without IB without virtual DRAM addressing
+[info]   + DRAM without IB: local=32 IB=0 DRAM=192 committed bytes
+[info] - should share phase1 and phase2 offsets for multi page IB plus DRAM without virtual DRAM addressing
+[info]   + multi page IB plus DRAM: local=64 IB=4608 DRAM=64 committed bytes
+[info] StaticScratchpadTest:
+[info] - should reuse a spilled UB head across three complete passes and switch only after the stalled tail while preserving W1 W2
+[info] - should commit a one-pass multi-segment row before reusing its pages and clamp the short final row
+[info] - should map noncontiguous physical pages and leave VPU direct and local reused operands out of row population
+[info] - should load a retained output as a local UB row with zero new population and zero DRAM requests
+[info] - should roll a multipage unaligned GEMM head over noncontiguous pages and retire unused capacity in a short last row
+[info] - should accept simultaneous configuration offers without cancellation or an idle cycle
+[info] Run completed in 43 seconds, 800 milliseconds.
+[info] Total number of tests run: 14
+[info] Suites: completed 5, aborted 0
+[info] Tests: succeeded 14, failed 0, canceled 0, ignored 0, pending 0
+[info] All tests passed.
+[success] Total time: 50 s, completed 2026. 11. 9. 오전 4:57:23

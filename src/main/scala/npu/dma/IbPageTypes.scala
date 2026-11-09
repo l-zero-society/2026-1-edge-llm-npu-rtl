@@ -3,7 +3,7 @@ package npu.dma
 import chisel3._
 import chisel3.util._
 
-object IbWriter { val DramFill = 0; val Output = 1 }
+object IbWriter { val DramFill = 0; val Output = 1; val Norm = 2 }
 object IbPageOp {
   val Allocate = 0; val Rebind = 1; val Release = 2
   val FinishWriter = 3; val AbortWriter = 4; val Invalidate = 5
@@ -13,7 +13,7 @@ object IbPageError {
   val Alias = 4; val Layout = 5; val Incomplete = 6
 }
 class IbPageMetadata extends Bundle {
-  val canonicalStart = UInt(64.W)
+  val canonicalStart = UInt(64.W) // DRAM namespace, or compatibility logical tag for Norm writer
   val validBytes = UInt(13.W)
   val ibPageBase = UInt(64.W)
   val contextId = UInt(16.W)
@@ -21,7 +21,7 @@ class IbPageMetadata extends Bundle {
   val logicalId = UInt(16.W)
   val generation = UInt(32.W)
   val layout = UInt(16.W)
-  val writer = UInt(1.W)
+  val writer = UInt(2.W)
   val dramReadable = Bool()
   val consumers = UInt(8.W) // explicit leases; all consumers must release
   val keepWeight = Bool()

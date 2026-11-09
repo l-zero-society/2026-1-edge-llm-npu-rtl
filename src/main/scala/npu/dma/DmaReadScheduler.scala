@@ -28,6 +28,7 @@ class DmaTargetStatus(p: DmaReadParams) extends Bundle {
   val demand = Bool()
   val impending = Bool()
   val hungry = Bool()
+  val localReservedBytes = UInt(32.W) // fixed non-DMA capacity, exclusive of DMA occupancy/reservation
   val full = Bool() // additional controller admission hold, not a second credit counter
   val requiredPages = UInt(p.cachePages.W)
   val requiredGenerations = Vec(p.cachePages, UInt(32.W))
@@ -38,6 +39,7 @@ class OcmConsume extends Bundle {
   val chunkLast = Bool()
 }
 class DmaCreditState(s: DmaSchedulerParams) extends Bundle {
+  val localReservedBytes = UInt(s.byteBits.W)
   val freeBytes = UInt(s.byteBits.W)
   val reservedBytes = UInt(s.byteBits.W)
   val bufferedBytes = UInt(s.byteBits.W)
@@ -170,7 +172,9 @@ class DmaReadScheduler(p: DmaReadParams, s: DmaSchedulerParams = DmaSchedulerPar
       assert(io.requests(t).bits.target === t.U)
       requests(t) := io.requests(t).bits; staged(t) := true.B
     }
-    val free = s.capacities(t).U - occupancy(t) - reserved(t)
+    val occupied = occupancy(t) +& reserved(t) +& io.status(t).localReservedBytes
+    val free = Mux(occupied <= s.capacities(t).U,s.capacities(t).U - occupied,0.U)
+    assert(occupied <= s.capacities(t).U, "local capacity and DMA credits must have one owner")
     val streamBusy = (0 until n).map(i => active(i) && activeRequest(i).stream === requests(t).stream).reduce(_ || _)
     val pagesReady = (0 until p.cachePages).map { page =>
       val x = io.pages(page); val m = x.metadata; val r = requests(t)
@@ -181,17 +185,18 @@ class DmaReadScheduler(p: DmaReadParams, s: DmaSchedulerParams = DmaSchedulerPar
     eligible(t) := staged(t) && !active(t) && !streamBusy && !contextError(t) &&
       io.status(t).enabled && io.status(t).needsExternalSupply && io.status(t).producerReady && pagesReady &&
       !io.status(t).full && free >= 4096.U && used(t) < s.entries(t).U
+    io.credit(t).localReservedBytes := io.status(t).localReservedBytes
     io.credit(t).freeBytes := free; io.credit(t).reservedBytes := reserved(t)
     io.credit(t).bufferedBytes := occupancy(t); io.credit(t).entriesUsed := used(t)
     io.credit(t).contextError := contextError(t); io.credit(t).active := active(t); io.credit(t).staged := staged(t)
   }
   // A held descriptor has no reservation. Recheck eligibility on EVERY fire;
   // an ineligible held target stays staged while other targets can proceed.
-  val keepHeld = locked && eligible(held)
+  val keepHeld = locked && eligible(held) && !io.admissionPause
   val pick = Mux(keepHeld, held, DmaRoundRobin.select(eligible.toSeq, lastAdmission))
   io.refill.valid := eligible.asUInt.orR && !io.admissionPause
   io.refill.bits := requests(pick)
-  when(locked && !eligible(held)) { locked := false.B }
+  when(locked && (!eligible(held) || io.admissionPause)) { locked := false.B }
   when(io.refill.valid && !io.refill.ready) { locked := true.B; held := pick }
   when(io.refill.fire) {
     locked := false.B; lastAdmission := pick
@@ -211,7 +216,7 @@ class DmaReadScheduler(p: DmaReadParams, s: DmaSchedulerParams = DmaSchedulerPar
     }.reduce(_ || _)
     (active(t) && referencesPage(activeRequest(t))) || buffered
   }.reduce(_ || _)
-  val allDrained = !locked && !active.asUInt.orR && !used.asUInt.orR && !io.controlConflict
+  val allDrained = (!locked || io.admissionPause) && !active.asUInt.orR && !used.asUInt.orR && !io.controlConflict
   // Release changes leases only. Unrelated occupancy/requests need not drain.
   io.controlDrained := Mux(releasePending, !io.controlConflict && !releasedReferences, allDrained)
   io.drained := allDrained && !staged.asUInt.orR

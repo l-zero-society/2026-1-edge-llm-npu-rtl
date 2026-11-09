@@ -18,12 +18,14 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
       val x = c.bits
       x.identity.target.poke(t.U); x.identity.contextId.poke(1.U); x.identity.epoch.poke(2.U)
       x.identity.logicalId.poke((10 + t).U); x.identity.refillId.poke((100 + t).U)
+      x.row.poke(0.U);x.rowLastUse.poke(false.B);x.hasNextRow.poke(false.B);x.nextRowBase.poke(0.U);x.nextRowBytes.poke(0.U)
       x.stream.poke(t.U); x.phase.poke((20 + t).U); x.destinationOffset.poke((64 * t).U)
       x.canonicalAddress.poke((0x1000 + t * 4096).U); x.address.poke((0x8000 + t * 4096).U)
       x.sourceIB.poke(ib(t).B); x.payloadBytes.poke(64.U)
       x.chunkLast.poke(true.B); x.streamLast.poke(true.B); x.fill.poke(false.B)
       x.fillAddress.poke(0.U); x.region.poke(0.U); x.generation.poke(1.U)
       val s = d.io.status(t)
+      s.localReservedBytes.poke(0.U)
       s.enabled.poke(true.B); s.producerReady.poke(true.B); s.needsExternalSupply.poke(true.B)
       s.demand.poke(false.B); s.impending.poke(false.B); s.hungry.poke(false.B); s.full.poke(false.B)
       s.requiredPages.poke(0.U)
@@ -41,7 +43,7 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "apply P0 P1 P2 and advance only on actual accepts with independent sources" in {
-    test(new DmaSourceScheduler(p)) { d =>
+    test(new DmaSourceScheduler(p)).withAnnotations(DmaReadTestModel.backend) { d =>
       init(d, Set(4))
       d.io.status(1).hungry.poke(true.B)
       d.io.status(2).demand.poke(true.B); d.io.status(3).impending.poke(true.B)
@@ -67,7 +69,7 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "round robin equal priorities independently across all five targets" in {
-    test(new DmaSourceScheduler(p)) { d =>
+    test(new DmaSourceScheduler(p)).withAnnotations(DmaReadTestModel.backend) { d =>
       init(d, Set(3, 4))
       for (t <- 0 until 5) d.io.status(t).hungry.poke(true.B)
       for (round <- 0 until 12) {
@@ -80,7 +82,7 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "promote an aged prefetch under continuous P0 and preserve age across source changes" in {
-    test(new DmaSourceScheduler(p)) { d =>
+    test(new DmaSourceScheduler(p)).withAnnotations(DmaReadTestModel.backend) { d =>
       init(d)
       for (t <- Seq(2, 3)) d.io.candidate(t).valid.poke(false.B)
       for (t <- Seq(0, 1)) d.io.status(t).demand.poke(true.B)
@@ -102,7 +104,7 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "recheck full and enabled before reserving a held admission without blocking other targets" in {
-    test(new DmaReadScheduler(p, DmaSchedulerParams())) { d =>
+    test(new DmaReadScheduler(p, DmaSchedulerParams())).withAnnotations(DmaReadTestModel.backend) { d =>
       d.io.admissionPause.poke(false.B);d.io.holdNewRequests.poke(false.B)
       d.io.controlCommand.valid.poke(false.B);d.io.refill.ready.poke(false.B)
       for(src<-0 until 2) {
@@ -113,6 +115,7 @@ class DmaSourceSchedulerTest extends AnyFlatSpec with ChiselScalatestTester {
         d.io.delivered(t).valid.poke(false.B);d.io.engineDone(t).valid.poke(false.B)
         d.io.done(t).ready.poke(true.B);d.io.consume(t).valid.poke(false.B);d.io.discardCommit(t).valid.poke(false.B)
         val x=d.io.status(t)
+        x.localReservedBytes.poke(0.U)
         x.enabled.poke(true.B);x.needsExternalSupply.poke(true.B);x.producerReady.poke(true.B)
         x.full.poke(false.B);x.demand.poke(false.B);x.impending.poke(false.B);x.hungry.poke(false.B)
         x.requiredPages.poke(0.U)
@@ -160,7 +163,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   behavior of "DMA scheduler integration"
 
   it should "drain each source while the other stalls and accept two sources after independent admissions" in {
-    test(new DmaReadHarness(scheduled = true)) { d =>
+    test(new DmaReadHarness(scheduled = true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d, stalls = false)
       s.map()
       s.configure(Config(tiles = 16))
@@ -189,7 +192,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "allow IB during long DRAM stalls and DRAM during long IB stalls" in {
-    test(new DmaReadHarness(scheduled = true)) { d =>
+    test(new DmaReadHarness(scheduled = true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(bytes = 64)
       s.configure(Config(tileBytes = 64, tail = 64))
@@ -212,7 +215,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "reserve once and finish continuations despite full hungry and enable changes" in {
-    test(new DmaReadHarness(DmaReadParams(pagesPerRegion=2,maxSegmentBytes=48), scheduled=true)) { d =>
+    test(new DmaReadHarness(DmaReadParams(pagesPerRegion=2,maxSegmentBytes=48), scheduled=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.configure(Config(tiles=16))
       s.ocmAllow=false
@@ -233,7 +236,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "keep tail full thresholds chunk exhaustion and simultaneous consume commit accounting exact" in {
-    test(new DmaReadHarness(scheduled=true)) { d =>
+    test(new DmaReadHarness(scheduled=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d,stalls=false)
       s.configure(Config(passes=4,tileBytes=16,tail=16))
       s.doneAllow=false
@@ -271,7 +274,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "preserve buffered error bytes until confirmed discard and wait for every producer page" in {
-    test(new DmaReadHarness(scheduled=true)) { d =>
+    test(new DmaReadHarness(scheduled=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       // Invalid IB-only errors reserve an entry but cannot manufacture DRAM.
       s.configure(Config(ibOnly=true,tileBytes=64,tail=64))
@@ -308,7 +311,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "apply the 4096B free threshold even to tail requests and release only consumed occupancy" in {
-    test(new DmaReadHarness(scheduled=true,schedulerParams=DmaSchedulerParams(chunkEntries=3))) { d =>
+    test(new DmaReadHarness(scheduled=true,schedulerParams=DmaSchedulerParams(chunkEntries=3))).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d)
       s.configure(Config(tiles=258,tileBytes=16,tail=16,tileStride=16)) // 4128 contiguous bytes
       s.issue(bytes=4096,refill=1);s.check(1,span(0x1000,4096),streamLast=false)
@@ -329,7 +332,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "retain partially delivered error data until an identity matched discard commit" in {
-    test(new DmaReadHarness(scheduled=true)) { d =>
+    test(new DmaReadHarness(scheduled=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d)
       s.map(bytes=512)
       s.configure(Config(tiles=2))
@@ -354,7 +357,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "admit all five staged targets fairly without a source busy global head of line" in {
-    test(new DmaReadHarness(scheduled=true)) { d =>
+    test(new DmaReadHarness(scheduled=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d)
       val streams=Seq(0,1,3,4,5)
       for(t<-0 until 5) {
@@ -378,7 +381,7 @@ class DmaReadArbiterTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "drain a staged old consumer before releasing its page without a control hold deadlock" in {
-    test(new DmaReadHarness(scheduled=true)) { d =>
+    test(new DmaReadHarness(scheduled=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d)
       s.map(bytes=64);s.configure(Config(tileBytes=64,tail=64))
       s.issue(bytes=64,refill=1);s.check(1,span(0x1000,64));s.consume(Id(0,1,1,1),64)

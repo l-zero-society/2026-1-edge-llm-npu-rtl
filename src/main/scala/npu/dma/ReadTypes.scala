@@ -37,6 +37,8 @@ case class DmaReadParams(regions: Int = 2, pagesPerRegion: Int = 4, maxSegmentBy
   */
 class ReadStreamConfig extends Bundle {
   val stream = UInt(3.W)
+  val direct = Bool() // VPU/aux pattern; never emits GEMM row reuse events
+  val lastRowBytes = UInt(32.W) // 0 = normal row length; otherwise final-row payload
   val supplyMode = UInt(2.W)
   val base = UInt(64.W)
   val rows = UInt(32.W)
@@ -77,6 +79,11 @@ class ReadPlan(p: DmaReadParams) extends Bundle {
   val address = UInt(64.W) // resolved physical source address
   val sourceIB = Bool()
   val payloadBytes = UInt(13.W)
+  val row = UInt(32.W)
+  val rowLastUse = Bool()
+  val hasNextRow = Bool()
+  val nextRowBase = UInt(64.W)
+  val nextRowBytes = UInt(46.W)
   val chunkLast = Bool()
   val streamLast = Bool()
   val fill = Bool()

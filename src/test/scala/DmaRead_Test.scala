@@ -11,18 +11,22 @@ import scala.collection.mutable
   */
 class DmaReadHarness(val p: DmaReadParams = DmaReadParams(pagesPerRegion = 2),
                      sharedIbPort: Boolean = false, val scheduled: Boolean = false,
-                     val schedulerParams: DmaSchedulerParams = DmaSchedulerParams()) extends Module {
+                     val schedulerParams: DmaSchedulerParams = DmaSchedulerParams(), val bankedWrites: Boolean = false) extends Module {
   val io = IO(new DmaReadSystemIO(p, schedulerParams) {
     val refill = Flipped(Decoupled(new RefillRequest))
     val schedulePermit = Input(Vec(ReadTarget.Count, Bool()))
   })
   if (scheduled) {
-    val system = Module(new DmaReadSystem(p, schedulerParams, sharedIbPort))
+    val system = Module(new DmaReadSystem(p, schedulerParams, sharedIbPort, bankedWrites))
     for ((name, port) <- system.io.elements) port <> io.elements(name)
     io.refill.ready := false.B
   } else {
-    val engine = Module(new DmaReadEngine(p))
+    val engine = Module(new DmaReadEngine(p,bankedWrites))
     val ib = Module(new IbBurstReader(p))
+    engine.io.normConfig <> io.normConfig;engine.io.normStore <> io.normStore
+    io.normStoreResult <> engine.io.normStoreResult;io.normLocalWrite <> engine.io.normLocalWrite;io.normDramWrite <> engine.io.normDramWrite
+    io.normEnabled := engine.io.normEnabled;io.normReady := engine.io.normReady;io.normExternalBytes := engine.io.normExternalBytes;io.normLocalBytes := engine.io.normLocalBytes
+    engine.io.cacheConfig <> io.cacheConfig; io.cacheWindows := engine.io.cacheWindows; io.rowTransitions := engine.io.rowTransitions
     engine.io.config <> io.config; engine.io.refill <> io.refill
     engine.io.pageCommand <> io.pageCommand; io.pageResult <> engine.io.pageResult
     engine.io.producerWrite <> io.producerWrite; io.producerResult <> engine.io.producerResult
@@ -40,18 +44,29 @@ class DmaReadHarness(val p: DmaReadParams = DmaReadParams(pagesPerRegion = 2),
     }
     ib.io.burst <> engine.io.ib
     ib.io.wordResponse <> io.wordResponse
-    if (sharedIbPort) {
+    if (bankedWrites) {
+      val hazard=Module(new IbReadWriteHazard)
+      hazard.io.read <> ib.io.wordRead;io.wordRead <> hazard.io.backing;io.fill <> engine.io.fill
+      hazard.io.writes <> engine.io.bankWrites;io.bankWrites <> hazard.io.backingWrites
+    } else if (sharedIbPort) {
+      io.bankWrites <> engine.io.bankWrites
       val arbiter = Module(new IbReadFillArbiter)
       arbiter.io.read <> ib.io.wordRead; arbiter.io.fill <> engine.io.fill
       io.wordRead <> arbiter.io.backingRead; io.fill <> arbiter.io.backingFill
       assert(!(io.wordRead.valid && io.fill.valid))
     } else {
+      io.bankWrites <> engine.io.bankWrites
       io.wordRead <> ib.io.wordRead; io.fill <> engine.io.fill
     }
   }
 }
 
 object DmaReadTestModel {
+  val Seed: Long = 0x4c5a2026L
+  // Explicit test-only backend selection; byte model/scoreboards are identical.
+  val backend = if (sys.env.get("DMA_TEST_BACKEND").contains("verilator"))
+    Seq(chiseltest.simulator.VerilatorBackendAnnotation) else Seq.empty
+
 
   // Address-dependent bytes, independent of the DUT traversal/source resolver.
   def dramByte(a: BigInt): Int = ((a * 29 + (a >> 8) * 17 + (a >> 12) * 11 + 7) & 255).toInt
@@ -60,7 +75,7 @@ object DmaReadTestModel {
   case class Id(target: Int, context: Int, epoch: Int, refill: Int, logical: Int = 1)
   case class Plan(id: Id, stream: Int, phase: Int, dest: BigInt, canonical: BigInt,
                           address: BigInt, bytes: Int, ib: Boolean, fill: Boolean,
-                          chunkLast: Boolean, streamLast: Boolean)
+                          chunkLast: Boolean, streamLast: Boolean, row: Int = 0, rowLastUse: Boolean = false, generation: Int = 0)
   case class Beat(id: Id, data: BigInt, offset: Int, first: Int, lanes: Int, last: Boolean)
   case class Delivery(id: Id, dest: BigInt, bytes: Vector[Int], mask: Int,
                               chunkLast: Boolean, streamLast: Boolean)
@@ -74,7 +89,7 @@ object DmaReadTestModel {
                             rowStride: BigInt = 0, passStride: BigInt = 0,
                             tileStride: BigInt = 256, tileBytes: Int = 256, tail: Int = 256,
                             rowBoundary: Boolean = false, ibOnly: Boolean = false,
-                            mode: Int = ReadSupplyMode.Stream)
+                            mode: Int = ReadSupplyMode.Stream, direct: Option[Boolean] = None, lastRowBytes: Int = 0)
 
   class Sim(val d: DmaReadHarness, val stalls: Boolean = true, val maxGetBytes: Int = 4096) {
     require(maxGetBytes >= 64 && maxGetBytes <= 4096 && (maxGetBytes & (maxGetBytes - 1)) == 0)
@@ -85,9 +100,15 @@ object DmaReadTestModel {
     var backingAllow = true
     var doneAllow = true
     var producerResultAllow = true
+    val bankAllowed = Array.fill(4)(true)
+    val bankCycleBytes = mutable.ArrayBuffer.empty[Int]
+    val normLocal = mutable.Map.empty[BigInt,Int]; val normDram = mutable.Map.empty[BigInt,Int]
+    var normLocalAllow = true; var normDramAllow = true; var normResultAllow = true
+    var normLocalCommits = 0; var normDramCommits = 0
     val ocmAllowed = Array.fill(ReadTarget.Count)(true)
     val allocations = mutable.Map.empty[Int, PageSpec]
     val admissions = mutable.ArrayBuffer.empty[Id]
+    val normResults = mutable.ArrayBuffer.empty[(Id,Int,Boolean)]
     val producerResults = mutable.ArrayBuffer.empty[(Id, Boolean)]
     val ibReads = mutable.ArrayBuffer.empty[(BigInt, Int)]
     val ib = mutable.Map.empty[BigInt, Int]
@@ -111,6 +132,10 @@ object DmaReadTestModel {
     private var heldBacking = Option.empty[BigInt]
     private val heldOutputs = mutable.Map.empty[String, Seq[BigInt]]
 
+    d.io.normConfig.valid.poke(false.B);d.io.normStore.valid.poke(false.B);d.io.normStoreResult.ready.poke(true.B)
+    d.io.normLocalWrite.ready.poke(false.B);d.io.normDramWrite.ready.poke(false.B)
+    for(b<-0 until 4)d.io.bankWrites(b).ready.poke(false.B)
+    d.io.cacheConfig.valid.poke(false.B)
     d.io.config.valid.poke(false.B); d.io.pageCommand.valid.poke(false.B)
     d.io.refill.valid.poke(false.B)
     d.io.producerWrite.valid.poke(false.B); d.io.producerResult.ready.poke(true.B)
@@ -124,6 +149,7 @@ object DmaReadTestModel {
       d.io.requests(t).valid.poke(false.B); d.io.consume(t).valid.poke(false.B)
       d.io.discardCommit(t).valid.poke(false.B)
       val status = d.io.status(t)
+      status.localReservedBytes.poke(0.U)
       status.enabled.poke(true.B); status.producerReady.poke(true.B); status.needsExternalSupply.poke(true.B)
       status.demand.poke(false.B); status.impending.poke(false.B); status.hungry.poke(true.B); status.full.poke(false.B)
       status.requiredPages.poke(0.U)
@@ -134,7 +160,7 @@ object DmaReadTestModel {
     def identity(x: ReadIdentity): Id = Id(u(x.target).toInt, u(x.contextId).toInt, u(x.epoch).toInt, u(x.refillId).toInt, u(x.logicalId).toInt)
     def plan(x: ReadPlan): Plan = Plan(identity(x.identity), u(x.stream).toInt, u(x.phase).toInt,
       u(x.destinationOffset), u(x.canonicalAddress), u(x.address), u(x.payloadBytes).toInt,
-      b(x.sourceIB), b(x.fill), b(x.chunkLast), b(x.streamLast))
+      b(x.sourceIB), b(x.fill), b(x.chunkLast), b(x.streamLast),u(x.row).toInt,b(x.rowLastUse),u(x.generation).toInt)
     def idPoke(x: ReadIdentity, id: Id): Unit = {
       x.target.poke(id.target.U); x.contextId.poke(id.context.U)
       x.epoch.poke(id.epoch.U); x.refillId.poke(id.refill.U); x.logicalId.poke(id.logical.U)
@@ -178,7 +204,7 @@ object DmaReadTestModel {
           assert(lanes > 0 && lanes <= 4)
           val raw = (0 until 64).foldLeft(BigInt(0)) { (v, i) =>
             // Poison padding is readable but must never reach OCM/IB coverage.
-            val laneByte = if (wordAddress + i >= start && wordAddress + i < end) dramByte(wordAddress + i) else 0xde
+            val laneByte = if (wordAddress + i >= start && wordAddress + i < end) normDram.getOrElse(wordAddress+i,dramByte(wordAddress + i)) else 0xde
             v | (BigInt(laneByte) << (8 * i))
           }
           val beat = Beat(p.id, raw, offset, first, lanes, wordAddress + 64 == fetchEnd)
@@ -200,6 +226,16 @@ object DmaReadTestModel {
         d.io.done(t).ready.poke((doneAllow && (!stalls || cycle % 4 == 0)).B)
       }
       d.io.producerResult.ready.poke(producerResultAllow.B)
+      d.io.normStoreResult.ready.poke(normResultAllow.B)
+      d.io.normLocalWrite.ready.poke(normLocalAllow.B);d.io.normDramWrite.ready.poke(normDramAllow.B)
+      for((port,store)<-Seq(d.io.normLocalWrite->normLocal,d.io.normDramWrite->normDram)) {
+        watch(if(port eq d.io.normLocalWrite) "normLocal" else "normDram",port.valid,port.ready)(
+          idSnapshot(identity(port.bits.identity))++Seq(u(port.bits.address),u(port.bits.data)))
+        if(b(port.valid)&&b(port.ready)) {
+          for(i<-0 until 16)store(u(port.bits.address)+i)=((u(port.bits.data)>>(8*i))&255).toInt
+          if(port eq d.io.normLocalWrite)normLocalCommits+=1 else normDramCommits+=1
+        }
+      }
       if (heldDram.isEmpty && dramQueue.headOption.exists(_._1 <= cycle) && (!stalls || cycle % 4 != 0)) {
         heldDram = Some(dramQueue.dequeue()._2)
       }
@@ -220,6 +256,8 @@ object DmaReadTestModel {
         val r = d.io.admitted.bits
         admissions += Id(u(r.target).toInt, u(r.contextId).toInt, u(r.epoch).toInt, u(r.refillId).toInt, u(r.logicalId).toInt)
       }
+      watch("normResult",d.io.normStoreResult.valid,d.io.normStoreResult.ready)(idSnapshot(identity(d.io.normStoreResult.bits.identity))++Seq(u(d.io.normStoreResult.bits.offset),if(b(d.io.normStoreResult.bits.error))BigInt(1)else BigInt(0)))
+      if(b(d.io.normStoreResult.valid)&&b(d.io.normStoreResult.ready))normResults+=((identity(d.io.normStoreResult.bits.identity),u(d.io.normStoreResult.bits.offset).toInt,b(d.io.normStoreResult.bits.error)))
       val dramReq = d.io.dram.request
       watch("producerResult", d.io.producerResult.valid, d.io.producerResult.ready)(
         idSnapshot(identity(d.io.producerResult.bits.identity)) ++
@@ -232,7 +270,9 @@ object DmaReadTestModel {
           idSnapshot(rp.id) ++ Seq(rp.address, rp.bytes, rp.dest, rp.canonical, rp.phase, rp.stream,
             if (rp.fill) BigInt(1) else BigInt(0), if (rp.ib) BigInt(1) else BigInt(0),
             if (rp.chunkLast) BigInt(1) else BigInt(0), if (rp.streamLast) BigInt(1) else BigInt(0),
-            u(dramReq.bits.plan.fillAddress), u(dramReq.bits.plan.region), u(dramReq.bits.plan.generation)))
+            u(dramReq.bits.plan.fillAddress), u(dramReq.bits.plan.region), u(dramReq.bits.plan.generation),
+            u(dramReq.bits.plan.row), if(b(dramReq.bits.plan.rowLastUse))BigInt(1)else BigInt(0),
+            u(dramReq.bits.plan.nextRowBase), u(dramReq.bits.plan.nextRowBytes)))
         if (b(dramReq.valid) && b(dramReq.ready)) { dramRequests += rp; enqueueDram(rp) }
       }
       val wr = d.io.wordRead
@@ -250,8 +290,9 @@ object DmaReadTestModel {
         }
         backingQueue.enqueue((cycle + (if (stalls) 2 else 1), raw))
       }
-      val fill = d.io.fill
-      watch("fill", fill.valid, fill.ready)(idSnapshot(identity(fill.bits.identity)) ++
+      def commit(port: DecoupledIO[IbFillWrite],key:String):Int={
+      val fill = port
+      watch(key, fill.valid, fill.ready)(idSnapshot(identity(fill.bits.identity)) ++
         Seq(u(fill.bits.wordAddress), u(fill.bits.data), u(fill.bits.laneMask), u(fill.bits.page), u(fill.bits.generation)))
       if (b(fill.valid) && b(fill.ready)) {
         val fid = identity(fill.bits.identity)
@@ -263,6 +304,15 @@ object DmaReadTestModel {
           writes += ((fid, a + i, ib(a + i)))
         }
       }
+        if(b(port.valid)&&b(port.ready))Integer.bitCount(u(port.bits.laneMask).toInt)*16 else 0
+      }
+      var committedBankBytes=0
+      commit(d.io.fill,"fill")
+      for(bk<-0 until 4){
+        d.io.bankWrites(bk).ready.poke((fillAllow && bankAllowed(bk) && (!stalls || cycle%6>=3)).B)
+        committedBankBytes+=commit(d.io.bankWrites(bk),s"bank$bk")
+      }
+      bankCycleBytes+=committedBankBytes
       var fullCount = 0
       for (t <- 0 until ReadTarget.Count) {
         val m = d.io.memory(t); val x = m.bits
@@ -302,6 +352,7 @@ object DmaReadTestModel {
     }
     def configure(c: Config): Unit = {
       val x = d.io.config.bits
+      x.direct.poke(c.direct.getOrElse(c.stream >= ReadStream.Quant).B); x.lastRowBytes.poke(c.lastRowBytes.U)
       x.stream.poke(c.stream.U); x.supplyMode.poke(c.mode.U); x.base.poke(c.base.U)
       x.rows.poke(c.rows.U); x.passes.poke(c.passes.U); x.tiles.poke(c.tiles.U)
       x.rowStride.poke(c.rowStride.U); x.passStride.poke(c.passStride.U)
@@ -412,7 +463,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   behavior of "DMA read path"
 
   it should "align expanded DRAM words and IB lanes with poisoned padding and exact logical bytes" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       var id = 0
       for (offset <- Seq(0, 16, 32, 48); length <- Seq(16, 32, 48, 64, 144)) {
@@ -450,7 +501,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "traverse GEMM rows passes K tails and compact row cache using canonical addresses" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.configure(Config(rows = 2, passes = 3, tiles = 3, rowStride = 0x2000, tail = 64))
       s.issue(bytes = 4096, refill = 1)
@@ -473,7 +524,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "keep W1 W2 cursors independent across explicit fusion phases and weight stride jumps" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       for ((stream, base) <- Seq(ReadStream.Weight1 -> 0x4000, ReadStream.Weight2 -> 0xa000))
         s.configure(Config(stream = stream, base = base, rows = 2, tiles = 2,
@@ -490,7 +541,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "supply linear direct Quant Freq and NormSpill payloads with configured repeat boundaries" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       for ((stream, target) <- Seq(0 -> 0, 3 -> 2, 4 -> 3, 5 -> 4)) {
         val base = BigInt(0x3010 + stream * 0x1000)
@@ -503,7 +554,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "supply weight working sets once in local cache mode and repeat them in STREAM mode" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       val workingSet = span(0x4000, 16) ++ span(0x4100, 16) ++ span(0x5000, 16) ++ span(0x5100, 16)
       val c = Config(stream = 1, base = 0x4000, rows = 3, passes = 2, tiles = 2,
@@ -523,7 +574,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "commit real fill bytes before hits and preserve gaps partial pages and epochs" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(canonical = 0x1030, bytes = 32)
       def request(id: Int, a: BigInt, n: Int, epoch: Int = 1): Unit = {
@@ -569,7 +620,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "split hit miss and mapping boundaries without early chunk last or filling padding" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(canonical = 0x1ff0, bytes = 16)
       s.map(index = 1, canonical = 0x1000, physical = 0x9000, bytes = 16)
@@ -607,7 +658,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "reject invalid IB only data without a fabricated DRAM fallback" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(bytes = 256)
       s.configure(Config(ibOnly = true))
@@ -624,7 +675,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "overlap independent full width returns and reserve a target through delayed fill commit" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d, stalls = false)
       s.map()
       s.map(index = 1, canonical = 0x2010, physical = 0x9000, bytes = 16)
@@ -658,7 +709,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "advance once at accepted dispatch and preserve a latched issue through long backend stalls" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.configure(Config(tiles = 3, tileStride = 256, tileBytes = 16, tail = 16))
       s.configure(Config(stream = 1, base = 0x9000, tileBytes = 16, tail = 16))
@@ -680,7 +731,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "continue a partially issued tile across chunks and backend transfer limits" in {
-    test(new DmaReadHarness(DmaReadParams(pagesPerRegion = 2, maxSegmentBytes = 48))) { d =>
+    test(new DmaReadHarness(DmaReadParams(pagesPerRegion = 2, maxSegmentBytes = 48))).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(canonical = 0x1010, bytes = 256)
       s.map(index = 1, canonical = 0x1210, physical = 0x9000, bytes = 64)
@@ -701,7 +752,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "arbitrate conflicting IB read and fill commands on a shared backing port" in {
-    test(new DmaReadHarness(sharedIbPort = true)) { d =>
+    test(new DmaReadHarness(sharedIbPort = true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(bytes = 1024)
       s.map(index = 1, canonical = 0x2000, physical = 0x9000, bytes = 1024)
@@ -720,7 +771,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "merge dense compact and non power of two tiles without crossing a pass" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       for ((c, id) <- Seq(
         Config(tiles = 16) -> 1,
@@ -744,7 +795,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "fetch 65 expanded words for an unaligned 4KiB payload and fill only valid bytes" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d, stalls = false)
       s.map(canonical = 0x1010)
       val c = Config(base = 0x1010, tiles = 16)
@@ -787,7 +838,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "keep whole raw words and one logical last with a small maximum TL Get profile" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d, maxGetBytes = 128)
       s.configure(Config(tiles = 16))
       s.issue(bytes = 4096, refill = 1); s.check(1, span(0x1000, 4096))
@@ -800,7 +851,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "preview five independent targets before permits and accept each winner only once" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(bytes = 256)
       s.configure(Config())
@@ -856,7 +907,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "refresh a waiting source preview on commit while preserving epoch and IB only rules" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(canonical = 0x2000, bytes = 64)
       for (stream <- Seq(0, 1, 3, 4, 5)) s.configure(Config(stream = stream,
@@ -900,7 +951,7 @@ class DmaReadTest extends AnyFlatSpec with ChiselScalatestTester {
   }
 
   it should "use a fully published 512B tail page then DRAM for the nonresident range" in {
-    test(new DmaReadHarness) { d =>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) { d =>
       val s = new Sim(d)
       s.map(bytes = 512)
       s.configure(Config(tiles = 2))

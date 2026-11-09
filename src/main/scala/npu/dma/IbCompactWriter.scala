@@ -58,7 +58,7 @@ class IbWriteArbiter extends Module {
 /** Bounded output-writer adapter, not a DMA output writer. Producer requests
   * acquire one local slot; the result is emitted only after durable commit(s).
   */
-class IbProducerAdapter(p: DmaReadParams) extends Module {
+class IbProducerAdapter(p: DmaReadParams, writerKind: Int = IbWriter.Output) extends Module {
   val io = IO(new Bundle {
     val request = Flipped(Decoupled(new IbProducerWrite(p)))
     val result = Decoupled(new IbProducerResult)
@@ -79,7 +79,7 @@ class IbProducerAdapter(p: DmaReadParams) extends Module {
   val s = io.pages(incoming.page)
   val end = incoming.offset +& (incoming.laneCount << 4)
   val legal = incoming.page < p.cachePages.U && s.allocated && s.writerOpen &&
-    s.metadata.writer === IbWriter.Output.U && !s.metadata.consumers.orR &&
+    s.metadata.writer === writerKind.U && !s.metadata.consumers.orR &&
     !s.metadata.keepWeight && s.readers === 0.U && incoming.generation === s.metadata.generation &&
     IbPageChecks.identity(s.metadata, incoming.identity) && incoming.offset(3, 0) === 0.U &&
     incoming.laneCount > 0.U && incoming.laneCount <= 4.U && end <= s.metadata.validBytes

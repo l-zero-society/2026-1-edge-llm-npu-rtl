@@ -6,7 +6,7 @@ import org.scalatest.flatspec.AnyFlatSpec
 class ReviewProbe extends AnyFlatSpec with ChiselScalatestTester {
   import DmaReadTestModel._
   it should "allow an independent WB refill to unblock consumption while an unrelated page release waits" in {
-    test(new DmaReadHarness(scheduled=true)) { d =>
+    test(new DmaReadHarness(scheduled=true)).withAnnotations(DmaReadTestModel.backend) { d =>
       val s=new Sim(d,stalls=false)
       s.map(bytes=64)
       s.configure(Config(base=0x4000,tileBytes=64,tail=64))
@@ -52,7 +52,7 @@ class ReviewProbe extends AnyFlatSpec with ChiselScalatestTester {
     }
   }
   it should "not issue a second write into a page whose DRAM fill writer just closed" in {
-    test(new DmaReadHarness) {d=>
+    test(new DmaReadHarness).withAnnotations(DmaReadTestModel.backend) {d=>
       val s=new Sim(d,stalls=false)
       assert(s.pageCommand(IbPageOp.Allocate,0,PageSpec(bytes=64,consumers=0))==0)
       s.configure(Config(tileBytes=64,tail=64))
@@ -73,7 +73,7 @@ class ReviewProbe extends AnyFlatSpec with ChiselScalatestTester {
     }
   }
   it should "serialize same-cycle page lease release against matching ingress while admitting unrelated ingress" in {
-    test(new DmaReadHarness(scheduled=true)) {d=>
+    test(new DmaReadHarness(scheduled=true)).withAnnotations(DmaReadTestModel.backend) {d=>
       val s=new Sim(d,stalls=false)
       s.map(bytes=64)
       s.configure(Config(stream=2,tileBytes=64,tail=64))
@@ -110,7 +110,7 @@ class ReviewProbe extends AnyFlatSpec with ChiselScalatestTester {
     val profile=DmaSchedulerParams.integrated
     assert(profile.capacities==Seq(16384,16384,8192,8192,8192))
     assert(profile.entries==Seq(4,4,2,2,2))
-    test(new DmaReadHarness(scheduled=true,schedulerParams=profile)) {d=>
+    test(new DmaReadHarness(scheduled=true,schedulerParams=profile)).withAnnotations(DmaReadTestModel.backend) {d=>
       val s=new Sim(d,stalls=false)
       for(t<-0 until 2)s.configure(Config(stream=t,base=0x10000+t*0x10000,tiles=5,
         tileBytes=4096,tail=4096,tileStride=4096))
